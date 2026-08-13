@@ -5,11 +5,16 @@ import lombok.Builder;
 import lombok.Getter;
 import lombok.Setter;
 
+import java.time.LocalDate;
+
 @Getter
 @Setter
 @Builder
 @AllArgsConstructor
-
-public class UserCalendarRequestDTO {
-
+public class UserCalendarResponse {
+  Long id;
+  String title;
+  String description;
+  LocalDate targetDate;
+  Long courseGroupId;
 }

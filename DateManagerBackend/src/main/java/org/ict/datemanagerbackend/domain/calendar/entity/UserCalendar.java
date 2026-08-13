@@ -31,6 +31,7 @@ public class UserCalendar {
 
 @Column(nullable = false,length = 100)
   private String title;
+
 @Column
 //엄청 큰 4G 짜리라는 뜻.
 @Lob
