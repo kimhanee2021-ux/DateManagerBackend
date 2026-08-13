@@ -1,4 +1,4 @@
-package org.ict.datemanagerbackend.domain.calendar.dto;
+package org.ict.datemanagerbackend.domain.calendar.dto.Response;
 
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -6,6 +6,7 @@ import lombok.Getter;
 import lombok.Setter;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 
 @Getter
 @Setter
@@ -17,4 +18,5 @@ public class UserCalendarResponse {
   String description;
   LocalDate targetDate;
   Long courseGroupId;
+  LocalDateTime createdAt;
 }

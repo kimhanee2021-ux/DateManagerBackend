@@ -1,6 +1,9 @@
-package org.ict.datemanagerbackend.domain.calendar.dto;
+package org.ict.datemanagerbackend.domain.calendar.dto.Request;
 
-import lombok.*;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Getter;
+import lombok.Setter;
 
 import java.time.LocalDate;
 
@@ -8,7 +11,6 @@ import java.time.LocalDate;
 @Setter
 @Builder
 @AllArgsConstructor
-
 public class UserCalendarCreateRequest {
   String title;
   String description;

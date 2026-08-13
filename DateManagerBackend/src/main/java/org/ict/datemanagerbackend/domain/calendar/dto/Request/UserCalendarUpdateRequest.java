@@ -1,4 +1,4 @@
-package org.ict.datemanagerbackend.domain.calendar.dto;
+package org.ict.datemanagerbackend.domain.calendar.dto.Request;
 
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -12,9 +12,9 @@ import java.time.LocalDate;
 @Builder
 @AllArgsConstructor
 public class UserCalendarUpdateRequest {
-  Long id;
   String title;
   String description;
   LocalDate targetDate;
   Long courseGroupId;
 }
+
