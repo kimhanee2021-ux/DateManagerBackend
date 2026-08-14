@@ -155,7 +155,9 @@ public class AdminController {
 
         long totalUsers = userRepository.countByWithdrawnAtIsNull();
         long totalSubscribers = subscriptionRepository.countByStatus("ACTIVE");
-        long totalCouples = coupleRepository.count();
+        // count()로 전체를 세면 연결 해제(DISCONNECTED)된 예전 커플까지 다 포함돼서 실제
+        // "매칭된 커플" 수보다 부풀려진다 - ACTIVE만 센다.
+        long totalCouples = coupleRepository.countByStatus("ACTIVE");
 
         Map<LocalDate, Set<Long>> visitorsByDay = new HashMap<>();
         for (LoginLog log : loginLogRepository.findByLoggedInAtAfter(windowStart)) {
@@ -208,14 +210,18 @@ public class AdminController {
         return ResponseEntity.ok(dtoPage);
     }
 
-    // filter: all(기본) / subscribed(멤버 중 구독자 있는 커플) / free(멤버 전원 비구독)
+    // filter: all(기본) / subscribed(멤버 중 구독자 있는 커플) / free(멤버 전원 비구독) - 구독 여부 기준
+    // status: active(기본) / all - 연결 상태 기준. 기본은 해제된 예전 커플을 안 보여주되,
+    // 관리자가 이력까지 보고 싶을 때는 status=all로 명시적으로 요청하게 한다.
     @GetMapping("/couples")
     public ResponseEntity<?> listCouples(Authentication authentication,
-                                          @RequestParam(required = false, defaultValue = "all") String filter) {
+                                          @RequestParam(required = false, defaultValue = "all") String filter,
+                                          @RequestParam(required = false, defaultValue = "active") String status) {
         if (!isAdmin(currentUser(authentication))) {
             return ResponseEntity.status(403).body(Map.of("error", "관리자만 접근할 수 있습니다"));
         }
         List<AdminCoupleDto> couples = coupleRepository.findAll().stream()
+                .filter(c -> "all".equals(status) || "ACTIVE".equals(c.getStatus()))
                 .map(this::toCoupleDto)
                 .filter(dto -> matchesCoupleFilter(dto, filter))
                 .toList();
@@ -292,8 +298,30 @@ public class AdminController {
         if (couple == null) {
             return ResponseEntity.status(404).body(Map.of("error", "커플을 찾을 수 없습니다"));
         }
+        boolean reactivating = "ACTIVE".equals(req.status());
+        LocalDateTime now = LocalDateTime.now();
         couple.setStatus(req.status());
+        if (reactivating) {
+            couple.setConnectedAt(now);
+            // 당사자들에게 "관리자가 방금 다시 연결해줬다"는 걸 보여주기 위한 플래그.
+            // 마이페이지/커플싱크탭이 이 값이 채워져 있으면 알림 배너를 띄우고,
+            // 확인하면 ack-admin-reconnect 엔드포인트가 다시 null로 되돌린다.
+            couple.setReconnectedByAdminAt(now);
+        } else {
+            // 해제할 땐 예전에 안 지워진 재연결 알림이 있었다면 같이 정리해준다(의미 없는 값이라).
+            couple.setReconnectedByAdminAt(null);
+        }
         coupleRepository.save(couple);
+
+        // 이용자 개인 화면(마이페이지/커플싱크탭)은 Couple.status가 아니라 CoupleMember.left_at으로
+        // 연결 여부를 판단한다(findByUser_IdAndLeftAtIsNull). 여기서 status만 바꾸고 left_at을
+        // 그대로 두면, 관리자 화면엔 "연결됨"으로 보여도 정작 당사자 화면엔 "연결 안 됨"으로 보이는
+        // (혹은 그 반대) 불일치가 생긴다 - 두 값이 항상 같이 움직이도록 여기서 맞춰준다.
+        for (CoupleMember member : coupleMemberRepository.findByCoupleId(id)) {
+            member.setLeftAt(reactivating ? null : now);
+            coupleMemberRepository.save(member);
+        }
+
         return ResponseEntity.ok(toCoupleDto(couple));
     }
 

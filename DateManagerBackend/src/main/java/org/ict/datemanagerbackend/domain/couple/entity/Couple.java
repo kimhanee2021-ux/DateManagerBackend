@@ -50,9 +50,15 @@ public class Couple {
   @Column(nullable = false)
   private String status = "ACTIVE"; // 커플 상태 (ACTIVE, DISCONNECTED - 생성 시 ACTIVE로 시작, 이후 setStatus()로 변경 가능)
 
+  // 예전엔 updatable=false였다 - "한 번 정해지면 안 바뀐다"는 전제였는데, 재결합 시 기존
+  // Couple row를 재사용하는 정책으로 바뀌면서 더 이상 맞지 않는 전제가 됐다(CoupleController.
+  // acceptInvite() 참고). 재결합할 때마다 이 값을 지금 시각으로 갱신해야 "이 사이트에서 연결된
+  // 지 며칠째" 표시가 예전 연결 기간까지 포함해서 부풀려지지 않는다. 관리자 페이지의 "다시 연결"
+  // 버튼(AdminController.updateCouple)도 같은 이유로 이 값을 갱신한다.
+  @Setter
   @Builder.Default
-  @Column(name = "connected_at", updatable = false)
-  private LocalDateTime connectedAt = LocalDateTime.now(); // 연동(커플 성사) 일시 - Couple이 만들어지는 순간의 시각
+  @Column(name = "connected_at")
+  private LocalDateTime connectedAt = LocalDateTime.now(); // 연동(커플 성사) 일시 - 가장 최근에 연결된 시각
 
   // 커플이 "실제로 처음 만난 날짜" - connectedAt(이 사이트에서 연결된 시각)과는 별개의 값이다.
   // Couple 생성 시점엔 알 수 없고(초대 수락만으로는 만난 날짜를 알 방법이 없음) 나중에
@@ -60,5 +66,15 @@ public class Couple {
   @Setter
   @Column(name = "met_date")
   private LocalDate metDate;
+
+  // 관리자가 방금 "다시 연결"을 눌러줬다는 걸 당사자에게 알려주기 위한 값. null이 아니면
+  // "아직 이용자가 확인 안 한 관리자발 재연결 알림이 있다"는 뜻이고, 이용자가 마이페이지/
+  // 커플싱크탭에서 그 배너를 확인하면(POST /api/couple/ack-admin-reconnect) 다시 null로
+  // 돌아간다 - 그래서 "이벤트가 있었는지"뿐 아니라 "아직 안 봤는지"까지 이 필드 하나로 표현한다.
+  // 사용자 스스로 초대 링크로 재결합했을 때는 본인이 한 행동이라 알림이 필요 없으므로
+  // CoupleController.acceptInvite()에서는 이 값을 건드리지 않고 null로 둔다.
+  @Setter
+  @Column(name = "reconnected_by_admin_at")
+  private LocalDateTime reconnectedByAdminAt;
 
 }
