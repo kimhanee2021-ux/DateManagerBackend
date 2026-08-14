@@ -127,3 +127,8 @@ naver:
 #OpenAI Chat Completions API 인증키 - AiChatService에서 사용 (결제 전에는 호출 시 401/429 발생 가능)
 openai:
   api-key: ${OPENAI_API_KEY}
+
+#카카오 로컬 API(장소 검색) 인증키 - KakaoPlaceSyncService에서 사용
+#소셜로그인용 KAKAO_CLIENT_ID/SECRET(OAuth)과는 별개의, 카카오 디벨로퍼스에서 발급받는 REST API 키
+kakao:
+  rest-api-key: ${KAKAO_REST_API_KEY}
