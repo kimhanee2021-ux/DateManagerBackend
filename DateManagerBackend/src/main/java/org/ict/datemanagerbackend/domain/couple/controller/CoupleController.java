@@ -35,7 +35,7 @@ import java.util.UUID;
  *   [A: 초대 생성]                [B: 링크 수락]                  [연결 해제]
  *   CoupleInvite                  CoupleInvite.status            Couple.status
  *   status=PENDING     ---->      =ACCEPTED               ---->  =DISCONNECTED
- *   (24시간 유효)                  + Couple 1건 생성                + CoupleMember 양쪽
+ *   (1시간 유효)                   + Couple 1건 생성                + CoupleMember 양쪽
  *                                  + CoupleMember 2건 생성            left_at 기록
  * </pre>
  *
@@ -49,8 +49,8 @@ import java.util.UUID;
 @RequestMapping("/api/couple")
 public class CoupleController {
 
-  // 초대 링크의 유효 기간. 프론트(CoupleTab.jsx)의 "링크는 24시간 동안 유효합니다" 문구와 반드시 맞춰야 함.
-  private static final long INVITE_EXPIRES_HOURS = 24;
+  // 초대 링크의 유효 기간. 프론트(CoupleTab.jsx)의 "링크는 1시간 동안 유효합니다" 문구와 반드시 맞춰야 함.
+  private static final long INVITE_EXPIRES_HOURS = 1;
 
   private final CoupleRepository coupleRepository;
   private final CoupleMemberRepository coupleMemberRepository;
@@ -173,6 +173,7 @@ public class CoupleController {
    *   <li>그 초대가 아직 PENDING 상태인가 (이미 ACCEPTED/EXPIRED면 재사용 불가)</li>
    *   <li>만료 시각이 지나지 않았는가 (지났으면 이 시점에 status를 EXPIRED로 갱신해둔다)</li>
    *   <li>자기 자신이 만든 링크를 자기가 수락하려는 건 아닌가</li>
+   *   <li>초대한 사람과 성별이 같지는 않은가 (동성 커플 연결 방지)</li>
    *   <li>내가 이미 다른 커플에 연결되어 있진 않은가</li>
    *   <li>초대를 만든 사람(A)이 그 사이에 이미 다른 커플에 연결되어버리진 않았는가</li>
    * </ol>
@@ -202,6 +203,9 @@ public class CoupleController {
     }
     if (invite.getInviter().getId().equals(me.getId())) {
       return ResponseEntity.badRequest().body(Map.of("error", "본인이 만든 초대 링크는 수락할 수 없습니다"));
+    }
+    if (invite.getInviter().getGender().equals(me.getGender())) {
+      return ResponseEntity.badRequest().body(Map.of("error", "이성하고만 연결할 수 있습니다"));
     }
     if (isAlreadyLinked(me.getId())) {
       return ResponseEntity.status(409).body(Map.of("error", "이미 연결된 커플이 있습니다"));
