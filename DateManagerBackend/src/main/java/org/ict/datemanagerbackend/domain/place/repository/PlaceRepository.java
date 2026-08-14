@@ -22,11 +22,42 @@ public interface PlaceRepository extends JpaRepository<Place, Long> {
   // 큐레이션/코스빌더에서 카테고리(맛집, 숙박 등)별로 장소를 페이지 단위 조회할 때 사용.
   Page<Place> findByCategory(String category, Pageable pageable);
 
+  // "공연" 칩처럼 실제로는 여러 category 값(KOPIS 장르명: 연극/뮤지컬/서양음악(클래식) 등)을 한 번에
+  // 묶어서 보여줘야 하는 경우용 - PlaceSyncService가 공연은 "공연"이 아니라 genrenm(장르명) 그대로를
+  // category에 저장하기 때문에 필요하다 (2026-08-14, 큐레이션 탭 실데이터 연동 중 발견).
+  Page<Place> findByCategoryIn(List<String> categories, Pageable pageable);
+
+  // 숙박 탭처럼 대분류 안에서 세부분류(placeCategory.subCategory)로 한 번 더 좁혀야 하는 경우용
+  // (2026-08-14, 숙박 카테고리 칩 복원하면서 추가).
+  Page<Place> findByCategoryAndPlaceCategory_SubCategory(String category, String subCategory, Pageable pageable);
+
+  // 숙박 탭 카테고리 칩에 "OO곳" 개수를 보여주기 위한 대분류 안 세부분류별 집계.
+  // 세부분류가 아직 안 붙은(placeCategory가 null인) 장소는 이 결과에 안 잡힌다.
+  @Query("SELECT p.placeCategory.subCategory, COUNT(p) FROM Place p "
+      + "WHERE p.category = :category AND p.placeCategory IS NOT NULL "
+      + "GROUP BY p.placeCategory.subCategory")
+  List<Object[]> countGroupedBySubCategory(String category);
+
+  // 이름에 특정 키워드가 포함된 장소를 찾는다 - 프랜차이즈/체인점 블랙리스트 정리용
+  // (TourApiSyncService.cleanupBlacklistedPlaces() 참고).
+  List<Place> findByNameContaining(String keyword);
+
+  // 아직 세부분류(place_category)가 안 붙은 장소만 골라서 자동 연결 배치(PlaceCategoryLinker)가 처리한다.
+  List<Place> findByPlaceCategoryIsNull();
+
   // 관리자 페이지에서 카테고리별 수집량을 확인할 때 사용. TourAPI/KOPIS/박물관 등 소스마다
   // 카테고리 값이 다양해서(관광지/문화시설/공연/액티비티/쇼핑/맛집/숙박/박물관·미술관 등)
   // 하드코딩하지 않고 실제 저장된 값을 그대로 집계한다. 결과의 각 Object[]는 [category, count].
   @Query("SELECT p.category, COUNT(p) FROM Place p GROUP BY p.category ORDER BY COUNT(p) DESC")
   List<Object[]> countGroupedByCategory();
+
+  // 전체 장소 백업(CSV export, AdminController)용 - place_category를 LEFT JOIN 페치해서 한 번의
+  // 쿼리로 다 가져온다. 엔티티로 84,000여건을 로드하면서 placeCategory를 건마다 지연 로딩하면
+  // N+1이 나서, 필요한 컬럼만 프로젝션으로 뽑는다(2026-08-14).
+  @Query("SELECT p.id, p.name, p.category, pc.subCategory, pc.emoji, p.address, p.latitude, p.longitude, "
+      + "p.externalSource, pc.scoreEnergy, pc.scoreImmersion, pc.scoreVibe, pc.scoreAesthetic, pc.scoreDepth "
+      + "FROM Place p LEFT JOIN p.placeCategory pc ORDER BY p.id")
+  List<Object[]> findAllForExport();
 
   // 같은 실제 장소가 TourAPI/KOPIS/네이버/카카오 등 서로 다른 소스에서 각각 들어와 중복 저장되는 걸
   // 막기 위해, 새 장소를 저장하기 전에 좌표가 가까운(대략 위경도 사각형 범위) 기존 장소들을 먼저 찾아서

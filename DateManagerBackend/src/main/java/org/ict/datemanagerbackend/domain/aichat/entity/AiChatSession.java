@@ -31,6 +31,14 @@ public class AiChatSession {
   @Column(name = "title", length = 100)
   private String title; // 세션 타이틀
 
+  // OpenAI Responses API(https://api.openai.com/v1/responses)가 대화 맥락을 서버 쪽에서 기억해주는
+  // 방식으로 바뀌면서(2026-08-14, 교육 자료 갱신분 반영) 추가된 컬럼. 매 요청마다 이 값을 함께
+  // 보내면 OpenAI가 지난 대화 전체를 이어서 기억해주기 때문에, 우리가 매번 메시지 이력을 통째로
+  // 다시 만들어 보낼 필요가 없어졌다. 세션 첫 메시지 전까지는 null.
+  @Setter
+  @Column(name = "last_response_id", length = 100)
+  private String lastResponseId;
+
   // place_styles와 같은 이유(DB에 실제 DEFAULT가 없어 insertable=false만으로는 ORA-01400 발생)로
   // insertable=false 대신 @Builder.Default로 애플리케이션이 직접 초기값을 채우도록 함(2026-08-13 수정).
   @Builder.Default

@@ -1,8 +1,14 @@
 package org.ict.datemanagerbackend.domain.place.controller;
 
+import org.ict.datemanagerbackend.domain.place.dto.CurationPlaceDto;
 import org.ict.datemanagerbackend.domain.place.dto.PlaceResponseDto;
 import org.ict.datemanagerbackend.domain.place.entity.Place;
+import org.ict.datemanagerbackend.domain.place.entity.PlaceAmenity;
+import org.ict.datemanagerbackend.domain.place.entity.PlaceCategory;
+import org.ict.datemanagerbackend.domain.place.entity.PlaceReality;
 import org.ict.datemanagerbackend.domain.place.entity.PlaceStyle;
+import org.ict.datemanagerbackend.domain.place.repository.PlaceAmenityRepository;
+import org.ict.datemanagerbackend.domain.place.repository.PlaceRealityRepository;
 import org.ict.datemanagerbackend.domain.place.repository.PlaceRepository;
 import org.ict.datemanagerbackend.domain.place.repository.PlaceStyleRepository;
 import org.springframework.data.domain.Page;
@@ -29,10 +35,58 @@ public class PlaceController {
 
   private final PlaceRepository placeRepository;
   private final PlaceStyleRepository placeStyleRepository;
+  private final PlaceRealityRepository placeRealityRepository;
+  private final PlaceAmenityRepository placeAmenityRepository;
 
-  public PlaceController(PlaceRepository placeRepository, PlaceStyleRepository placeStyleRepository) {
+  public PlaceController(
+      PlaceRepository placeRepository,
+      PlaceStyleRepository placeStyleRepository,
+      PlaceRealityRepository placeRealityRepository,
+      PlaceAmenityRepository placeAmenityRepository) {
     this.placeRepository = placeRepository;
     this.placeStyleRepository = placeStyleRepository;
+    this.placeRealityRepository = placeRealityRepository;
+    this.placeAmenityRepository = placeAmenityRepository;
+  }
+
+  // 큐레이션 탭(데이트/숙박 카드)용 조회 API. matchScore는 아직 항상 null - 로그인 유저 성향값을
+  // 저장하는 파이프라인이 없어서(Task #20) 실제 매칭 계산을 못 붙인 상태. 그동안은 최신순(id desc)으로
+  // 대체 정렬한다.
+  // category는 콤마로 여러 값을 묶어 보낼 수 있다 - "공연" 칩처럼 실제 DB 값이 여러 개(장르명)로
+  // 나뉘어 있는 경우를 프론트가 한 번에 필터링하기 위해서다(2026-08-14).
+  @GetMapping("/curation")
+  public ResponseEntity<Page<CurationPlaceDto>> listCurationPlaces(
+      @RequestParam(required = false) String category,
+      @RequestParam(required = false) String subCategory,
+      @PageableDefault(size = 20, sort = "id", direction = Sort.Direction.DESC) Pageable pageable) {
+    Page<Place> page;
+    if (category != null && !category.isBlank() && subCategory != null && !subCategory.isBlank()) {
+      page = placeRepository.findByCategoryAndPlaceCategory_SubCategory(category, subCategory, pageable);
+    } else if (category == null || category.isBlank()) {
+      page = placeRepository.findAll(pageable);
+    } else if (category.contains(",")) {
+      page = placeRepository.findByCategoryIn(List.of(category.split(",")), pageable);
+    } else {
+      page = placeRepository.findByCategory(category, pageable);
+    }
+
+    List<Long> placeIds = page.getContent().stream().map(Place::getId).toList();
+
+    Map<Long, PlaceReality> realityByPlaceId = placeRealityRepository.findByPlace_IdIn(placeIds).stream()
+        .collect(Collectors.toMap(r -> r.getPlace().getId(), r -> r));
+
+    Map<Long, List<String>> amenitiesByPlaceId = placeAmenityRepository.findByPlace_IdIn(placeIds).stream()
+        .collect(Collectors.groupingBy(
+            a -> a.getPlace().getId(),
+            Collectors.mapping(PlaceAmenity::getAmenityTag, Collectors.toList())
+        ));
+
+    return ResponseEntity.ok(page.map(place -> {
+      PlaceCategory placeCategory = place.getPlaceCategory();
+      PlaceReality reality = realityByPlaceId.get(place.getId());
+      List<String> amenities = amenitiesByPlaceId.getOrDefault(place.getId(), List.of());
+      return CurationPlaceDto.from(place, placeCategory, reality, amenities);
+    }));
   }
 
   // category를 안 넘기면 전체를 최신 등록순으로, 넘기면 해당 카테고리만 조회한다.
@@ -55,12 +109,27 @@ public class PlaceController {
 
   // 홈탭 "지역 기반 추천"용 - 접속 좌표(lat/lon)에서 가까운 순으로 최대 limit개를 내려준다.
   // 페이지네이션 없이 그냥 리스트로 반환(추천 후보 풀로만 쓰이므로 단순하게).
+  // category는 콤마로 여러 값을 묶어 보낼 수 있다(큐레이션 탭과 동일한 이유 - "공연" 칩은 실제로는
+  // 장르명 여러 개를 가리켜야 함, 2026-08-14). findNearestPlaces가 카테고리 필터를 지원하지 않아서,
+  // 필터를 줄 때는 넉넉한 풀(limit의 5배, 최소 1000)을 먼저 가까운 순으로 가져온 뒤 걸러낸다 - 이미
+  // 거리순으로 온 리스트라 필터링해도 순서는 유지된다.
   @GetMapping("/nearby")
   public ResponseEntity<List<PlaceResponseDto>> listNearbyPlaces(
       @RequestParam double lat,
       @RequestParam double lon,
+      @RequestParam(required = false) String category,
       @RequestParam(defaultValue = "300") int limit) {
-    List<Place> places = placeRepository.findNearestPlaces(lat, lon, limit);
+    List<Place> places;
+    if (category == null || category.isBlank()) {
+      places = placeRepository.findNearestPlaces(lat, lon, limit);
+    } else {
+      List<String> categories = List.of(category.split(","));
+      int pool = Math.max(limit * 5, 1000);
+      places = placeRepository.findNearestPlaces(lat, lon, pool).stream()
+          .filter(place -> categories.contains(place.getCategory()))
+          .limit(limit)
+          .toList();
+    }
 
     List<Long> placeIds = places.stream().map(Place::getId).toList();
     Map<Long, PlaceStyle> styleByPlaceId = placeStyleRepository.findByPlace_IdIn(placeIds).stream()
@@ -70,6 +139,72 @@ public class PlaceController {
         .map(place -> PlaceResponseDto.from(place, styleByPlaceId.get(place.getId())))
         .toList();
     return ResponseEntity.ok(result);
+  }
+
+  // 큐레이션 탭 "내 주변만 보기" 토글용 - findNearestPlaces는 카테고리 필터를 지원하지 않아서, 필터링
+  // 여지를 두고 넉넉하게(요청 limit의 20배 또는 최소 500) 가까운 순 풀을 가져온 다음 카테고리를
+  // 애플리케이션에서 걸러내고 앞에서부터 limit개만 자른다. 이미 거리순으로 온 리스트라 필터링해도
+  // 순서(가까운 순)는 그대로 유지된다(2026-08-14).
+  @GetMapping("/curation/nearby")
+  public ResponseEntity<List<CurationPlaceDto>> listNearbyCurationPlaces(
+      @RequestParam double lat,
+      @RequestParam double lon,
+      @RequestParam(required = false) String category,
+      @RequestParam(required = false) String subCategory,
+      @RequestParam(defaultValue = "30") int limit) {
+    int pool = Math.max(limit * 20, 500);
+    List<Place> candidates = placeRepository.findNearestPlaces(lat, lon, pool);
+
+    List<String> categories = (category == null || category.isBlank())
+        ? null
+        : List.of(category.split(","));
+
+    List<Place> filtered = candidates.stream()
+        .filter(place -> categories == null || categories.contains(place.getCategory()))
+        .filter(place -> subCategory == null || subCategory.isBlank()
+            || (place.getPlaceCategory() != null && subCategory.equals(place.getPlaceCategory().getSubCategory())))
+        .limit(limit)
+        .toList();
+
+    List<Long> placeIds = filtered.stream().map(Place::getId).toList();
+    Map<Long, PlaceReality> realityByPlaceId = placeRealityRepository.findByPlace_IdIn(placeIds).stream()
+        .collect(Collectors.toMap(r -> r.getPlace().getId(), r -> r));
+    Map<Long, List<String>> amenitiesByPlaceId = placeAmenityRepository.findByPlace_IdIn(placeIds).stream()
+        .collect(Collectors.groupingBy(
+            a -> a.getPlace().getId(),
+            Collectors.mapping(PlaceAmenity::getAmenityTag, Collectors.toList())
+        ));
+
+    List<CurationPlaceDto> result = filtered.stream()
+        .map(place -> CurationPlaceDto.from(
+            place,
+            place.getPlaceCategory(),
+            realityByPlaceId.get(place.getId()),
+            amenitiesByPlaceId.getOrDefault(place.getId(), List.of())
+        ))
+        .toList();
+    return ResponseEntity.ok(result);
+  }
+
+  // 큐레이션 탭 카테고리 칩에 개수를 표시하기 위한 공개 API. 카테고리별로 매번 목록을 다 가져와
+  // 세는 건 비효율적이라 DB에서 GROUP BY로 바로 집계한다(AdminController의 같은 패턴 재사용).
+  @GetMapping("/category-counts")
+  public ResponseEntity<Map<String, Long>> getCategoryCounts() {
+    Map<String, Long> counts = new java.util.LinkedHashMap<>();
+    for (Object[] row : placeRepository.countGroupedByCategory()) {
+      counts.put((String) row[0], (Long) row[1]);
+    }
+    return ResponseEntity.ok(counts);
+  }
+
+  // 숙박 탭처럼 대분류 하나를 세부분류 칩으로 한 번 더 쪼개서 보여줄 때 쓰는 개수 집계 API.
+  @GetMapping("/category-counts/sub")
+  public ResponseEntity<Map<String, Long>> getSubCategoryCounts(@RequestParam String category) {
+    Map<String, Long> counts = new java.util.LinkedHashMap<>();
+    for (Object[] row : placeRepository.countGroupedBySubCategory(category)) {
+      counts.put((String) row[0], (Long) row[1]);
+    }
+    return ResponseEntity.ok(counts);
   }
 
   @GetMapping("/{id}")

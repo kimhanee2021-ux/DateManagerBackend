@@ -4,6 +4,8 @@ import org.ict.datemanagerbackend.domain.couple.entity.Couple;
 import org.ict.datemanagerbackend.domain.couple.entity.CoupleMember;
 import org.ict.datemanagerbackend.domain.couple.repository.CoupleMemberRepository;
 import org.ict.datemanagerbackend.domain.couple.repository.CoupleRepository;
+import org.ict.datemanagerbackend.domain.place.entity.PlaceCategory;
+import org.ict.datemanagerbackend.domain.place.repository.PlaceCategoryRepository;
 import org.ict.datemanagerbackend.domain.place.repository.PlaceRepository;
 import org.ict.datemanagerbackend.domain.place.service.CultureEventSyncService;
 import org.ict.datemanagerbackend.domain.place.service.MuseumSyncService;
@@ -57,6 +59,7 @@ public class AdminController {
     private final CoupleRepository coupleRepository;
     private final CoupleMemberRepository coupleMemberRepository;
     private final PlaceRepository placeRepository;
+    private final PlaceCategoryRepository placeCategoryRepository;
     private final PlaceSyncService placeSyncService;
     private final TourApiSyncService tourApiSyncService;
     private final MuseumSyncService museumSyncService;
@@ -71,6 +74,7 @@ public class AdminController {
 
     public AdminController(UserRepository userRepository, CoupleRepository coupleRepository,
                             CoupleMemberRepository coupleMemberRepository, PlaceRepository placeRepository,
+                            PlaceCategoryRepository placeCategoryRepository,
                             PlaceSyncService placeSyncService, TourApiSyncService tourApiSyncService,
                             MuseumSyncService museumSyncService, NaverPlaceSyncService naverPlaceSyncService,
                             CultureEventSyncService cultureEventSyncService,
@@ -80,6 +84,7 @@ public class AdminController {
         this.coupleRepository = coupleRepository;
         this.coupleMemberRepository = coupleMemberRepository;
         this.placeRepository = placeRepository;
+        this.placeCategoryRepository = placeCategoryRepository;
         this.placeSyncService = placeSyncService;
         this.tourApiSyncService = tourApiSyncService;
         this.museumSyncService = museumSyncService;
@@ -385,6 +390,83 @@ public class AdminController {
             return ResponseEntity.status(502).body(Map.of("error", "동기화 중 오류가 발생했습니다: " + e.getMessage()));
         }
         return placesSyncStatus();
+    }
+
+    // 블랙리스트 필터 도입(2026-08-14) 이전에 이미 저장된 프랜차이즈/체인점(올리브영 등)을 한 번에 정리.
+    @PostMapping("/places/cleanup-blacklist")
+    public ResponseEntity<?> cleanupBlacklistedPlaces(Authentication authentication) {
+        if (!isAdmin(currentUser(authentication))) {
+            return ResponseEntity.status(403).body(Map.of("error", "관리자만 접근할 수 있습니다"));
+        }
+        return ResponseEntity.ok(tourApiSyncService.cleanupBlacklistedPlaces());
+    }
+
+    // 빅데이터 분석/외부 업데이트를 위한 전체 장소 백업(CSV). 8만여 건이라 엔티티로 로드하지 않고
+    // PlaceRepository.findAllForExport()의 프로젝션 쿼리 한 방으로 필요한 컬럼만 가져온다(2026-08-14).
+    @GetMapping("/places/export")
+    public ResponseEntity<String> exportPlaces(Authentication authentication) {
+        if (!isAdmin(currentUser(authentication))) {
+            return ResponseEntity.status(403).body("관리자만 접근할 수 있습니다");
+        }
+        StringBuilder csv = new StringBuilder();
+        csv.append("id,name,category,subCategory,emoji,address,latitude,longitude,externalSource,")
+           .append("scoreEnergy,scoreImmersion,scoreVibe,scoreAesthetic,scoreDepth\n");
+        for (Object[] row : placeRepository.findAllForExport()) {
+            csv.append(row[0]).append(',')
+               .append(csvEscape((String) row[1])).append(',')
+               .append(csvEscape((String) row[2])).append(',')
+               .append(csvEscape((String) row[3])).append(',')
+               .append(csvEscape((String) row[4])).append(',')
+               .append(csvEscape((String) row[5])).append(',')
+               .append(row[6] == null ? "" : row[6]).append(',')
+               .append(row[7] == null ? "" : row[7]).append(',')
+               .append(csvEscape((String) row[8])).append(',')
+               .append(row[9] == null ? "" : row[9]).append(',')
+               .append(row[10] == null ? "" : row[10]).append(',')
+               .append(row[11] == null ? "" : row[11]).append(',')
+               .append(row[12] == null ? "" : row[12]).append(',')
+               .append(row[13] == null ? "" : row[13]).append('\n');
+        }
+        return ResponseEntity.ok()
+                .header("Content-Type", "text/csv; charset=UTF-8")
+                .header("Content-Disposition", "attachment; filename=places_export.csv")
+                .body(csv.toString());
+    }
+
+    // place_categories(9개 대분류 x 48개 세부분류 성향점수 공식) 전체 백업(CSV).
+    @GetMapping("/places/categories/export")
+    public ResponseEntity<String> exportPlaceCategories(Authentication authentication) {
+        if (!isAdmin(currentUser(authentication))) {
+            return ResponseEntity.status(403).body("관리자만 접근할 수 있습니다");
+        }
+        StringBuilder csv = new StringBuilder();
+        csv.append("id,parentCategory,subCategory,emoji,scoreEnergy,scoreImmersion,scoreVibe,scoreAesthetic,scoreDepth,isIndoor,isActivity\n");
+        for (PlaceCategory pc : placeCategoryRepository.findAll()) {
+            csv.append(pc.getId()).append(',')
+               .append(csvEscape(pc.getParentCategory())).append(',')
+               .append(csvEscape(pc.getSubCategory())).append(',')
+               .append(csvEscape(pc.getEmoji())).append(',')
+               .append(pc.getScoreEnergy()).append(',')
+               .append(pc.getScoreImmersion()).append(',')
+               .append(pc.getScoreVibe()).append(',')
+               .append(pc.getScoreAesthetic()).append(',')
+               .append(pc.getScoreDepth()).append(',')
+               .append(pc.getIsIndoor()).append(',')
+               .append(pc.getIsActivity()).append('\n');
+        }
+        return ResponseEntity.ok()
+                .header("Content-Type", "text/csv; charset=UTF-8")
+                .header("Content-Disposition", "attachment; filename=place_categories_export.csv")
+                .body(csv.toString());
+    }
+
+    // CSV 필드에 콤마/따옴표/줄바꿈이 섞여 있어도(장소명·주소에 흔함) 깨지지 않게 감싸는 이스케이프.
+    private String csvEscape(String value) {
+        if (value == null) return "";
+        if (value.contains(",") || value.contains("\"") || value.contains("\n")) {
+            return "\"" + value.replace("\"", "\"\"") + "\"";
+        }
+        return value;
     }
 
     @GetMapping("/places/sync-status")

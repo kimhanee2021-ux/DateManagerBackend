@@ -6,7 +6,9 @@ import lombok.extern.slf4j.Slf4j;
 import org.ict.datemanagerbackend.domain.place.dto.TourApiPlaceDto;
 import org.ict.datemanagerbackend.domain.place.entity.Place;
 import org.ict.datemanagerbackend.domain.place.repository.PlaceRepository;
+import org.ict.datemanagerbackend.domain.place.repository.PlaceStyleRepository;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
@@ -45,7 +47,19 @@ public class TourApiSyncService {
       "39", "맛집"
   );
 
+  // 전국 어디서나 지점이 반복되는 프랜차이즈/체인점은 "데이트 장소"로서 변별력이 없어 목록을 도배하므로
+  // 이름에 이 키워드가 포함되면 동기화 자체를 건너뛴다(특히 쇼핑 카테고리에 올리브영 등이 지점마다
+  // 중복 노출되던 문제, 2026-08-14).
+  private static final List<String> BLACKLISTED_NAME_KEYWORDS = List.of(
+      "올리브영", "다이소", "이마트24", "GS25", "CU", "세븐일레븐", "미니스톱"
+  );
+
+  private boolean isBlacklisted(String name) {
+    return name != null && BLACKLISTED_NAME_KEYWORDS.stream().anyMatch(name::contains);
+  }
+
   private final PlaceRepository placeRepository;
+  private final PlaceStyleRepository placeStyleRepository;
   private final PlaceDedupService placeDedupService;
   private final RestTemplate restTemplate = new RestTemplate();
 
@@ -67,6 +81,10 @@ public class TourApiSyncService {
       List<TourApiPlaceDto> places = fetchPlaces(contentTypeId);
 
       for (TourApiPlaceDto p : places) {
+        if (isBlacklisted(p.title())) {
+          continue;
+        }
+
         Optional<Place> existing =
             placeRepository.findByExternalSourceAndExternalId(EXTERNAL_SOURCE, p.contentid());
 
@@ -120,6 +138,32 @@ public class TourApiSyncService {
     // TODO: 전화번호, 가격/주차 정보는 이 목록 API(areaBasedList2)에는 안 들어있음.
     //       필요하면 contentid로 상세조회 API(detailIntro2)를 한 번 더 호출해서
     //       PlaceReality.priceText/parkingInfo를 채우는 로직을 추가할 것.
+  }
+
+  // 블랙리스트 필터 도입(2026-08-14) 이전에 이미 저장되어 있던 프랜차이즈/체인점을 정리한다.
+  // 관리자가 수동으로 한 번 호출하는 일회성 정리용 메서드(AdminController에서 호출).
+  // place_styles/course_items 등 자식 테이블이 이 장소를 참조하고 있으면 FK 제약(ORA-02292)으로
+  // 삭제가 실패하는데, 그런 장소는 이미 코스에 담기는 등 실사용 데이터가 있다는 뜻이라 억지로 지우지
+  // 않고 건너뛴다. 한 건씩 개별 트랜잭션으로 처리해서, 하나가 막혀도 나머지 삭제는 계속 진행된다.
+  public Map<String, Integer> cleanupBlacklistedPlaces() {
+    int deleted = 0;
+    int skipped = 0;
+    for (String keyword : BLACKLISTED_NAME_KEYWORDS) {
+      for (Place place : placeRepository.findByNameContaining(keyword)) {
+        try {
+          // place_styles는 매 장소마다 1:1로 자동 생성돼 있어서(성향점수 중립값), 이건 실사용
+          // 데이터가 아니라 부산물이므로 먼저 지워도 안전하다.
+          placeStyleRepository.findByPlace_Id(place.getId()).ifPresent(placeStyleRepository::delete);
+          placeRepository.delete(place);
+          placeRepository.flush();
+          deleted++;
+        } catch (DataIntegrityViolationException e) {
+          skipped++;
+        }
+      }
+    }
+    log.info("블랙리스트 장소 정리 완료 - {}건 삭제, {}건 연관 데이터로 건너뜀", deleted, skipped);
+    return Map.of("deleted", deleted, "skipped", skipped);
   }
 
   // TourAPI가 한 번에 내려주는 최대 건수(그 이상 요청하면 페이지가 잘림)

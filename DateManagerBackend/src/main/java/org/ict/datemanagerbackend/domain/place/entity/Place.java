@@ -2,9 +2,12 @@ package org.ict.datemanagerbackend.domain.place.entity;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.FetchType;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
+import jakarta.persistence.JoinColumn;
+import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
 import lombok.AccessLevel;
@@ -44,6 +47,13 @@ public class Place {
   @Setter
   @Column(name = "category", length = 50)
   private String category; // 카테고리 (카페, 맛집 등)
+
+  // 세부분류 + 성향점수 공식을 담은 참조 행. 아직 세분류 작업이 안 끝난 장소는 null로 남아있을 수 있다
+  // (그런 경우 PlaceStyle의 중립값 50을 그대로 씀). 2026-08-14 신규.
+  @Setter
+  @ManyToOne(fetch = FetchType.LAZY)
+  @JoinColumn(name = "place_category_id")
+  private PlaceCategory placeCategory;
 
   @Setter
   @Column(name = "address", length = 255)
