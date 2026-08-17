@@ -10,7 +10,7 @@ import java.util.List;
 
 public interface UserCalendarService {
 //<<글 등록>>
-UserCalendarResponse createUserCalendar(UserCalendarCreateRequest request);
+UserCalendarResponse createUserCalendar(Long userId,UserCalendarCreateRequest request);
 //<<글 조회>>
 List<UserCalendarResponse> getMonthlyCalendars(Long userId, LocalDate start, LocalDate end);
 //<<날짜 및 글 수정>>
