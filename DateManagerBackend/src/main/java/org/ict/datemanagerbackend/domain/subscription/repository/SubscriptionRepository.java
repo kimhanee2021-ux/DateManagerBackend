@@ -1,6 +1,6 @@
-package org.ict.datemanagerbackend.domain.user.repository;
+package org.ict.datemanagerbackend.domain.subscription.repository;
 
-import org.ict.datemanagerbackend.domain.user.entity.Subscription;
+import org.ict.datemanagerbackend.domain.subscription.entity.Subscription;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;

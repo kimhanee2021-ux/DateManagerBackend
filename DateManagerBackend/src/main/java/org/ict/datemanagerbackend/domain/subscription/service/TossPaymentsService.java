@@ -1,4 +1,4 @@
-package org.ict.datemanagerbackend.domain.user.service;
+package org.ict.datemanagerbackend.domain.subscription.service;
 
 import tools.jackson.databind.JsonNode;
 import lombok.extern.slf4j.Slf4j;
