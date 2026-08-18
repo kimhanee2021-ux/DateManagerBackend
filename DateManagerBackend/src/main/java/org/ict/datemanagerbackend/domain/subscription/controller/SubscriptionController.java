@@ -1,12 +1,9 @@
 package org.ict.datemanagerbackend.domain.subscription.controller;
 
-import tools.jackson.databind.JsonNode;
 import org.ict.datemanagerbackend.domain.subscription.entity.Subscription;
 import org.ict.datemanagerbackend.domain.user.entity.User;
-import org.ict.datemanagerbackend.domain.subscription.repository.SubscriptionRepository;
 import org.ict.datemanagerbackend.domain.user.repository.UserRepository;
 import org.ict.datemanagerbackend.domain.subscription.service.SubscriptionService;
-import org.ict.datemanagerbackend.domain.subscription.service.TossPaymentsService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -18,7 +15,6 @@ import org.springframework.web.client.HttpStatusCodeException;
 
 import java.time.LocalDateTime;
 import java.util.Map;
-import java.util.Optional;
 
 // 구독(정기결제) API. 결제 흐름:
 //   1) 프론트가 토스페이먼츠 결제위젯으로 카드 등록 인증을 마치면 authKey+customerKey를 받는다
@@ -27,20 +23,17 @@ import java.util.Optional;
 //   3) 이후 매일 새벽 SubscriptionRenewalScheduler가 만료일 지난 구독을 자동으로 재결제한다
 //   4) 결제가 실패하면 status가 PAST_DUE로 바뀌는데, POST /charge로 수동 재시도할 수 있다
 //   5) POST /cancel 로 구독을 해지하면 이후 자동 갱신 대상에서 제외된다
+// 엔티티 조립/상태 전이 규칙은 전부 SubscriptionService에 있고, 컨트롤러는 요청 파싱과
+// 서비스가 던진 예외를 HTTP 상태코드로 매핑하는 것만 담당한다.
 @RestController
 @RequestMapping("/api/subscriptions")
 public class SubscriptionController {
 
-    private final SubscriptionRepository subscriptionRepository;
     private final UserRepository userRepository;
-    private final TossPaymentsService tossPaymentsService;
     private final SubscriptionService subscriptionService;
 
-    public SubscriptionController(SubscriptionRepository subscriptionRepository, UserRepository userRepository,
-                                   TossPaymentsService tossPaymentsService, SubscriptionService subscriptionService) {
-        this.subscriptionRepository = subscriptionRepository;
+    public SubscriptionController(UserRepository userRepository, SubscriptionService subscriptionService) {
         this.userRepository = userRepository;
-        this.tossPaymentsService = tossPaymentsService;
         this.subscriptionService = subscriptionService;
     }
 
@@ -55,11 +48,9 @@ public class SubscriptionController {
     @GetMapping("/me")
     public ResponseEntity<?> getMySubscription(Authentication authentication) {
         Long userId = (Long) authentication.getPrincipal();
-        Optional<Subscription> sub = subscriptionRepository.findTopByUserIdOrderByCreatedAtDesc(userId);
-        if (sub.isEmpty()) {
-            return ResponseEntity.ok(Map.of("hasSubscription", false));
-        }
-        return ResponseEntity.ok(toDto(sub.get()));
+        return subscriptionService.findMySubscription(userId)
+                .<ResponseEntity<?>>map(sub -> ResponseEntity.ok(toDto(sub)))
+                .orElseGet(() -> ResponseEntity.ok(Map.of("hasSubscription", false)));
     }
 
     @PostMapping("/billing-key")
@@ -72,56 +63,38 @@ public class SubscriptionController {
         if (req.authKey() == null || req.customerKey() == null || req.planCode() == null) {
             return ResponseEntity.badRequest().body(Map.of("error", "authKey, customerKey, planCode가 모두 필요합니다"));
         }
-        JsonNode result;
         try {
-            result = tossPaymentsService.issueBillingKey(req.authKey(), req.customerKey());
+            Subscription subscription = subscriptionService.registerBillingKeyAndCharge(
+                    user, req.authKey(), req.customerKey(), req.planCode());
+            return ResponseEntity.ok(toDto(subscription));
         } catch (HttpStatusCodeException e) {
             return ResponseEntity.status(502).body(Map.of("error", "토스페이먼츠 빌링키 발급에 실패했습니다"));
+        } catch (IllegalStateException e) {
+            return ResponseEntity.status(502).body(Map.of("error", e.getMessage()));
         }
-        String billingKey = result.path("billingKey").asText(null);
-        if (billingKey == null) {
-            return ResponseEntity.status(502).body(Map.of("error", "빌링키를 받지 못했습니다"));
-        }
-        Subscription subscription = Subscription.builder()
-                .user(user)
-                .planCode(req.planCode())
-                .paymentProvider("TOSS")
-                .billingKey(billingKey)
-                .customerKey(req.customerKey())
-                .build();
-        subscription = subscriptionService.chargeAndUpdate(subscription); // 가입 즉시 첫 결제
-        return ResponseEntity.ok(toDto(subscription));
     }
 
     // PAST_DUE(결제 실패) 상태를 수동으로 재시도할 때 사용. 정상 구독 중엔 자동 갱신(스케줄러)만으로 충분하다.
     @PostMapping("/charge")
     public ResponseEntity<?> retryCharge(Authentication authentication) {
         Long userId = (Long) authentication.getPrincipal();
-        Subscription subscription = subscriptionRepository.findTopByUserIdOrderByCreatedAtDesc(userId).orElse(null);
-        if (subscription == null || subscription.getBillingKey() == null) {
-            return ResponseEntity.badRequest().body(Map.of("error", "등록된 빌링키가 없습니다. 먼저 카드를 등록해주세요"));
+        try {
+            Subscription subscription = subscriptionService.retryCharge(userId);
+            return ResponseEntity.ok(toDto(subscription));
+        } catch (IllegalStateException e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
         }
-        if ("CANCELED".equals(subscription.getStatus())) {
-            return ResponseEntity.badRequest().body(Map.of("error", "이미 해지된 구독입니다"));
-        }
-        subscription = subscriptionService.chargeAndUpdate(subscription);
-        return ResponseEntity.ok(toDto(subscription));
     }
 
     @PostMapping("/cancel")
     public ResponseEntity<?> cancel(Authentication authentication) {
         Long userId = (Long) authentication.getPrincipal();
-        Subscription subscription = subscriptionRepository.findTopByUserIdOrderByCreatedAtDesc(userId).orElse(null);
-        if (subscription == null) {
-            return ResponseEntity.badRequest().body(Map.of("error", "구독 내역이 없습니다"));
+        try {
+            Subscription subscription = subscriptionService.cancel(userId);
+            return ResponseEntity.ok(toDto(subscription));
+        } catch (IllegalStateException e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
         }
-        if ("CANCELED".equals(subscription.getStatus())) {
-            return ResponseEntity.badRequest().body(Map.of("error", "이미 해지된 구독입니다"));
-        }
-        // 만료일(expiresAt)은 그대로 둔다 - 이미 낸 이용 기간까지는 유지되고, 그 이후 자동 갱신만 안 되는 방식
-        subscription.setStatus("CANCELED");
-        subscriptionRepository.save(subscription);
-        return ResponseEntity.ok(toDto(subscription));
     }
 
     private SubscriptionDto toDto(Subscription s) {
