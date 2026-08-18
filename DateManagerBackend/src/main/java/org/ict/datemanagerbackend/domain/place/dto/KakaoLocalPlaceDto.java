@@ -5,6 +5,7 @@ package org.ict.datemanagerbackend.domain.place.dto;
 // 문자열로 내려와서(네이버처럼 10^7 스케일 정수가 아님) 그대로 파싱하면 된다.
 public record KakaoLocalPlaceDto(
     String placeName,     // 업체명
+    String categoryName,  // 카카오 표준 카테고리 계층 문자열 (예: "음식점 > 한식 > 국밥") - 맛집/카페 세분화용
     String addressName,   // 지번주소
     String roadAddressName, // 도로명주소
     String x,              // 경도

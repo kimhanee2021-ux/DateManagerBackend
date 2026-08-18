@@ -5,6 +5,8 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.ict.datemanagerbackend.domain.place.dto.KakaoLocalPlaceDto;
 import org.ict.datemanagerbackend.domain.place.entity.Place;
+import org.ict.datemanagerbackend.domain.place.entity.PlaceCategory;
+import org.ict.datemanagerbackend.domain.place.repository.PlaceCategoryRepository;
 import org.ict.datemanagerbackend.domain.place.repository.PlaceRepository;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpEntity;
@@ -60,6 +62,32 @@ public class KakaoPlaceSyncService {
       "CT1", "문화시설"
   ));
 
+  // 카카오 category_name 2단계(음식점 > OO > ...)를 우리 세부분류로 매핑 (2026-08-18, 실측으로
+  // 확인한 상위 분포 기준 - 한식/일식/중식/양식이 대부분이고 나머지는 소수라 "식당(기타)"로 묶음)
+  private static final Map<String, String> CUISINE_SUBCATEGORY_MAP = Map.ofEntries(
+      Map.entry("한식", "식당(한식)"),
+      Map.entry("중식", "식당(중식)"),
+      Map.entry("일식", "식당(일식)"),
+      Map.entry("양식", "식당(양식)"),
+      Map.entry("아시아음식", "식당(아시아음식)"),
+      Map.entry("분식", "식당(분식)"),
+      Map.entry("뷔페", "식당(뷔페)")
+  );
+
+  // 유명 프랜차이즈 제외 목록(2026-08-18) - 지점이 너무 많아 추천 결과가 특정 체인으로 도배되는 걸
+  // 막기 위함. 이름에 이 키워드가 포함되면(지점명 앞뒤로 뭐가 붙어도) 동기화 대상에서 제외한다.
+  private static final Set<String> FRANCHISE_BLACKLIST = Set.of(
+      // 커피 프랜차이즈
+      "스타벅스", "이디야", "투썸플레이스", "메가엠지씨커피", "메가커피", "컴포즈커피", "빽다방",
+      "커피빈", "할리스", "폴바셋", "탐앤탐스", "파스쿠찌", "엔젤리너스", "매머드커피", "더벤티", "블루보틀",
+      // 베이커리/디저트 프랜차이즈
+      "파리바게뜨", "뚜레쥬르", "배스킨라빈스", "던킨",
+      // 패스트푸드/치킨 프랜차이즈
+      "맥도날드", "버거킹", "롯데리아", "서브웨이", "맘스터치",
+      "굽네치킨", "교촌치킨", "네네치킨", "푸라닭",
+      "도미노피자", "피자헛", "미스터피자", "파파존스"
+  );
+
   // 서울 25개구 + 경기 주요 10개시 + 인천 5개구 + 부산 16개구. NaverPlaceSyncService와 동일한 지역
   // 커버리지(수도권+부산 우선)를 쓴다 - "구/시 이름만 검색하면 인천 서구/부산 서구처럼 겹치는 지명이
   // 섞일 수 있어 시/도 이름을 붙인다"는 이유도 동일.
@@ -92,6 +120,7 @@ public class KakaoPlaceSyncService {
 
   private final PlaceRepository placeRepository;
   private final PlaceDedupService placeDedupService;
+  private final PlaceCategoryRepository placeCategoryRepository;
   private final RestTemplate restTemplate = new RestTemplate();
 
   @Value("${kakao.rest-api-key}")
@@ -106,6 +135,8 @@ public class KakaoPlaceSyncService {
 
     int created = 0;
     int skippedDuplicate = 0;
+    int skippedFranchise = 0;
+    int skippedFakeCafe = 0;
     int failedQueries = 0;
     Set<String> seenThisRun = new HashSet<>();
 
@@ -127,6 +158,19 @@ public class KakaoPlaceSyncService {
           String address = !item.roadAddressName().isBlank() ? item.roadAddressName() : item.addressName();
           if (item.placeName().isBlank() || address.isBlank()) continue;
 
+          if (isFranchise(item.placeName())) {
+            skippedFranchise++;
+            continue;
+          }
+
+          // CE7은 커피/디저트 카페뿐 아니라 만화카페/보드카페/키즈카페까지 섞여 내려오는데(실측 확인,
+          // category_name이 "가정,생활 > 여가시설 > ..."로 완전히 다른 계층), 후자는 음식점이 아니라
+          // 놀거리/체험 시설이라 맛집 카테고리에 안 맞아서 뺀다.
+          if ("CE7".equals(categoryGroupCode) && !isRealCafe(item.categoryName())) {
+            skippedFakeCafe++;
+            continue;
+          }
+
           Double lng = parseCoordinate(item.x());
           Double lat = parseCoordinate(item.y());
           String externalId = hashKey(item.placeName() + "|" + address);
@@ -141,9 +185,12 @@ public class KakaoPlaceSyncService {
             continue;
           }
 
+          PlaceCategory subCategory = resolveSubCategory(categoryGroupCode, item);
+
           Place place = Place.builder()
               .name(item.placeName())
               .category(category)
+              .placeCategory(subCategory)
               .address(address)
               .latitude(lat)
               .longitude(lng)
@@ -158,8 +205,39 @@ public class KakaoPlaceSyncService {
       }
     }
 
-    log.info("카카오 지역 검색 동기화 완료 - 신규 {}건, 다른 소스와 중복이라 건너뜀 {}건, 실패한 검색어 {}건",
-        created, skippedDuplicate, failedQueries);
+    log.info("카카오 지역 검색 동기화 완료 - 신규 {}건, 다른 소스와 중복이라 건너뜀 {}건, "
+            + "프랜차이즈라 제외 {}건, 카페 아닌 여가시설이라 제외 {}건, 실패한 검색어 {}건",
+        created, skippedDuplicate, skippedFranchise, skippedFakeCafe, failedQueries);
+  }
+
+  private boolean isFranchise(String placeName) {
+    return FRANCHISE_BLACKLIST.stream().anyMatch(placeName::contains);
+  }
+
+  // CE7 중 진짜 카페(커피/디저트)인지 - category_name이 "음식점 > 카페"로 시작해야 함
+  private boolean isRealCafe(String categoryName) {
+    return categoryName != null && categoryName.startsWith("음식점 > 카페");
+  }
+
+  /**
+   * FD6(음식점)는 category_name 2단계(예: "음식점 > 한식 > 국밥"에서 "한식")로 음식 종류를 판단해서
+   * "식당(한식)" 등으로 매핑한다. CE7(카페)는 카카오 분류에 브런치 태그가 따로 없어서 이름에
+   * "브런치"가 들어가면 "카페(브런치)", 아니면 "카페(일반)"으로 나눈다(실측 확인, 2026-08-18).
+   */
+  // 맛집(FD6/CE7) 소스만 세분화 대상이다 - 숙박(AD5)/관광지(AT4)/문화시설(CT1)까지 여기로 오면
+  // "맛집" 세부분류가 엉뚱하게 붙어버리므로 그 외 카테고리는 아예 조회하지 않고 null(미분류)로 둔다.
+  private PlaceCategory resolveSubCategory(String categoryGroupCode, KakaoLocalPlaceDto item) {
+    String subCategoryName;
+    if ("CE7".equals(categoryGroupCode)) {
+      subCategoryName = item.placeName().contains("브런치") ? "카페(브런치)" : "카페(일반)";
+    } else if ("FD6".equals(categoryGroupCode)) {
+      String[] parts = item.categoryName() == null ? new String[0] : item.categoryName().split(" > ");
+      String cuisine = parts.length >= 2 ? parts[1] : null;
+      subCategoryName = cuisine == null ? "식당(기타)" : CUISINE_SUBCATEGORY_MAP.getOrDefault(cuisine, "식당(기타)");
+    } else {
+      return null;
+    }
+    return placeCategoryRepository.findByParentCategoryAndSubCategory("맛집", subCategoryName).orElse(null);
   }
 
   private List<KakaoLocalPlaceDto> searchAllPages(String region, String categoryGroupCode) {
@@ -200,6 +278,7 @@ public class KakaoPlaceSyncService {
     for (JsonNode doc : root.path("documents")) {
       items.add(new KakaoLocalPlaceDto(
           doc.path("place_name").asText(""),
+          doc.path("category_name").asText(""),
           doc.path("address_name").asText(""),
           doc.path("road_address_name").asText(""),
           doc.path("x").asText(""),
