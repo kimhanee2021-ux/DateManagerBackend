@@ -1,8 +1,8 @@
-package org.ict.datemanagerbackend.domain.user.service;
+package org.ict.datemanagerbackend.domain.subscription.service;
 
 import lombok.extern.slf4j.Slf4j;
-import org.ict.datemanagerbackend.domain.user.entity.Subscription;
-import org.ict.datemanagerbackend.domain.user.repository.SubscriptionRepository;
+import org.ict.datemanagerbackend.domain.subscription.entity.Subscription;
+import org.ict.datemanagerbackend.domain.subscription.repository.SubscriptionRepository;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 

@@ -1,8 +1,8 @@
 package org.ict.datemanagerbackend.domain.admin.controller;
 
-import org.ict.datemanagerbackend.domain.user.entity.Subscription;
+import org.ict.datemanagerbackend.domain.subscription.entity.Subscription;
 import org.ict.datemanagerbackend.domain.user.entity.User;
-import org.ict.datemanagerbackend.domain.user.repository.SubscriptionRepository;
+import org.ict.datemanagerbackend.domain.subscription.repository.SubscriptionRepository;
 import org.ict.datemanagerbackend.domain.user.repository.UserRepository;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;

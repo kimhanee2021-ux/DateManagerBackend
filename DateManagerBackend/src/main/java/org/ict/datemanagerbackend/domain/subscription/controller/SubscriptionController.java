@@ -1,12 +1,12 @@
-package org.ict.datemanagerbackend.domain.user.controller;
+package org.ict.datemanagerbackend.domain.subscription.controller;
 
 import tools.jackson.databind.JsonNode;
-import org.ict.datemanagerbackend.domain.user.entity.Subscription;
+import org.ict.datemanagerbackend.domain.subscription.entity.Subscription;
 import org.ict.datemanagerbackend.domain.user.entity.User;
-import org.ict.datemanagerbackend.domain.user.repository.SubscriptionRepository;
+import org.ict.datemanagerbackend.domain.subscription.repository.SubscriptionRepository;
 import org.ict.datemanagerbackend.domain.user.repository.UserRepository;
-import org.ict.datemanagerbackend.domain.user.service.SubscriptionService;
-import org.ict.datemanagerbackend.domain.user.service.TossPaymentsService;
+import org.ict.datemanagerbackend.domain.subscription.service.SubscriptionService;
+import org.ict.datemanagerbackend.domain.subscription.service.TossPaymentsService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.GetMapping;
