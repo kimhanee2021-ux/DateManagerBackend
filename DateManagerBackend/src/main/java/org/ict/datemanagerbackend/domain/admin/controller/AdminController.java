@@ -392,8 +392,9 @@ public class AdminController {
                 case "kakao" -> kakaoPlaceSyncService.syncPlaces();
                 case "cultureinfo" -> cultureEventSyncService.syncEvents();
                 case "lodging" -> lodgingCsvSyncService.syncFromCsv();
+                case "boxoffice" -> placeSyncService.syncBoxOffice();
                 default -> {
-                    return ResponseEntity.badRequest().body(Map.of("error", "source는 kopis, festival, tourapi, museum, naver, kakao, cultureinfo, lodging 중 하나여야 합니다"));
+                    return ResponseEntity.badRequest().body(Map.of("error", "source는 kopis, festival, tourapi, museum, naver, kakao, cultureinfo, lodging, boxoffice 중 하나여야 합니다"));
                 }
             }
         } catch (Exception e) {

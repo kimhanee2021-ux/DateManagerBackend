@@ -2,10 +2,13 @@ package org.ict.datemanagerbackend.domain.place.service;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.ict.datemanagerbackend.domain.place.dto.KopisBoxOfficeDto;
 import org.ict.datemanagerbackend.domain.place.dto.KopisFacilityDto;
 import org.ict.datemanagerbackend.domain.place.dto.KopisPerformanceDetailDto;
 import org.ict.datemanagerbackend.domain.place.dto.KopisPerformanceDto;
+import org.ict.datemanagerbackend.domain.place.entity.PerformanceRanking;
 import org.ict.datemanagerbackend.domain.place.entity.Place;
+import org.ict.datemanagerbackend.domain.place.repository.PerformanceRankingRepository;
 import org.ict.datemanagerbackend.domain.place.repository.PlaceRepository;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -54,10 +57,15 @@ public class PlaceSyncService {
   // KOPIS 공연시설 상세조회 API - mt10id로 주소/위경도를 얻기 위해 사용
   private static final String KOPIS_FACILITY_URL = "http://www.kopis.or.kr/openApi/restful/prfplc";
 
+  // KOPIS 박스오피스(예매율 순위) API - 실측으로 파라미터명을 확인함(date가 아니라 stdate/eddate,
+  // catecode/area는 선택). ststype=day면 stdate=eddate를 같은 날짜로 줘서 "그날의 순위"를 받는다.
+  private static final String KOPIS_BOXOFFICE_URL = "http://www.kopis.or.kr/openApi/restful/boxoffice";
+
   // 우리 DB에서 "이 데이터가 KOPIS에서 왔다"는 걸 표시하기 위한 값 (Place.externalSource에 저장됨)
   private static final String EXTERNAL_SOURCE = "KOPIS";
 
   private final PlaceRepository placeRepository;
+  private final PerformanceRankingRepository performanceRankingRepository;
 
   // 외부 API를 HTTP로 호출할 때 쓰는 스프링 기본 도구. new로 직접 생성해도 됨 (설정이 단순한 경우)
   private final RestTemplate restTemplate = new RestTemplate();
@@ -99,6 +107,88 @@ public class PlaceSyncService {
 
     log.info("KOPIS 축제 동기화 완료 - 신규 {}건, 갱신 {}건 (전체 조회 {}건)",
         result.created(), result.updated(), festivals.size());
+  }
+
+  /**
+   * KOPIS 박스오피스(예매율 순위) 동기화 - 공연/축제 동기화 직후에 돌아야 그날 새로 들어온 공연도
+   * 순위표에서 바로 매칭될 수 있어서 3시 40분으로 배치했다(공연 3시, 축제 3시30분 다음).
+   * 순위는 매일 바뀌므로 upsert 없이 전체 삭제 후 다시 채운다(검색 기반 소스와 동일한 이유).
+   * 아직 우리 DB에 없는 공연(mt20id 불일치)은 순위표에서 조용히 건너뛴다 - 다음날 공연 동기화가
+   * 그 공연을 채워 넣으면 그 다음 순위 동기화 때 자연스럽게 잡힌다.
+   */
+  @Scheduled(cron = "0 40 3 * * *")
+  public void syncBoxOffice() {
+    // 박스오피스는 당일 데이터가 아직 집계 중일 수 있어(실측 확인) 전날(어제) 기준으로 조회한다.
+    LocalDate yesterday = LocalDate.now().minusDays(1);
+    List<KopisBoxOfficeDto> ranking = fetchBoxOffice(yesterday);
+
+    performanceRankingRepository.deleteAllInBatch();
+
+    int linked = 0;
+    for (KopisBoxOfficeDto item : ranking) {
+      Optional<Place> place = placeRepository.findByExternalSourceAndExternalId(EXTERNAL_SOURCE, item.mt20id());
+      if (place.isEmpty()) {
+        continue;
+      }
+      Integer rankNo = parseIntSafe(item.rnum());
+      if (rankNo == null) {
+        continue;
+      }
+      performanceRankingRepository.save(PerformanceRanking.builder()
+          .place(place.get())
+          .rankNo(rankNo)
+          .genreName(item.cate())
+          .area(item.area())
+          .build());
+      linked++;
+    }
+
+    log.info("KOPIS 박스오피스 순위 동기화 완료 - 전체 {}건 중 Place 매칭 {}건", ranking.size(), linked);
+  }
+
+  /** KOPIS 박스오피스 API를 호출해서 지정한 날짜의 예매율 순위를 받아옴 (장르/지역 필터 없이 전체 순위) */
+  private List<KopisBoxOfficeDto> fetchBoxOffice(LocalDate date) {
+    String d = date.format(DateTimeFormatter.BASIC_ISO_DATE);
+    String encodedServiceKey = java.net.URLEncoder.encode(serviceKey, java.nio.charset.StandardCharsets.UTF_8);
+    String url = UriComponentsBuilder.fromUriString(KOPIS_BOXOFFICE_URL)
+        .queryParam("service", encodedServiceKey)
+        .queryParam("ststype", "day")
+        .queryParam("stdate", d)
+        .queryParam("eddate", d)
+        .build(true)
+        .toUriString();
+
+    byte[] xmlBytes = restTemplate.getForObject(java.net.URI.create(url), byte[].class);
+    return parseBoxOffice(xmlBytes);
+  }
+
+  /** KOPIS 박스오피스 응답 구조: <boxofs><boxof>...순위 1건...</boxof>...</boxofs> */
+  private List<KopisBoxOfficeDto> parseBoxOffice(byte[] xmlBytes) {
+    List<KopisBoxOfficeDto> result = new ArrayList<>();
+    Document doc = parseXml(xmlBytes);
+    if (doc == null) return result;
+
+    NodeList items = doc.getElementsByTagName("boxof");
+    for (int i = 0; i < items.getLength(); i++) {
+      Element el = (Element) items.item(i);
+      result.add(new KopisBoxOfficeDto(
+          text(el, "mt20id"),
+          text(el, "prfnm"),
+          text(el, "cate"),
+          text(el, "area"),
+          text(el, "rnum")
+      ));
+    }
+    return result;
+  }
+
+  private Integer parseIntSafe(String value) {
+    if (value == null || value.isBlank()) return null;
+    try {
+      return Integer.parseInt(value.trim());
+    } catch (NumberFormatException e) {
+      return null;
+    }
   }
 
   private record UpsertResult(int created, int updated) {
