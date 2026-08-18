@@ -2,11 +2,13 @@ package org.ict.datemanagerbackend.domain.place.controller;
 
 import org.ict.datemanagerbackend.domain.place.dto.CurationPlaceDto;
 import org.ict.datemanagerbackend.domain.place.dto.PlaceResponseDto;
+import org.ict.datemanagerbackend.domain.place.entity.PerformanceRanking;
 import org.ict.datemanagerbackend.domain.place.entity.Place;
 import org.ict.datemanagerbackend.domain.place.entity.PlaceAmenity;
 import org.ict.datemanagerbackend.domain.place.entity.PlaceCategory;
 import org.ict.datemanagerbackend.domain.place.entity.PlaceReality;
 import org.ict.datemanagerbackend.domain.place.entity.PlaceStyle;
+import org.ict.datemanagerbackend.domain.place.repository.PerformanceRankingRepository;
 import org.ict.datemanagerbackend.domain.place.repository.PlaceAmenityRepository;
 import org.ict.datemanagerbackend.domain.place.repository.PlaceRealityRepository;
 import org.ict.datemanagerbackend.domain.place.repository.PlaceRepository;
@@ -37,16 +39,19 @@ public class PlaceController {
   private final PlaceStyleRepository placeStyleRepository;
   private final PlaceRealityRepository placeRealityRepository;
   private final PlaceAmenityRepository placeAmenityRepository;
+  private final PerformanceRankingRepository performanceRankingRepository;
 
   public PlaceController(
       PlaceRepository placeRepository,
       PlaceStyleRepository placeStyleRepository,
       PlaceRealityRepository placeRealityRepository,
-      PlaceAmenityRepository placeAmenityRepository) {
+      PlaceAmenityRepository placeAmenityRepository,
+      PerformanceRankingRepository performanceRankingRepository) {
     this.placeRepository = placeRepository;
     this.placeStyleRepository = placeStyleRepository;
     this.placeRealityRepository = placeRealityRepository;
     this.placeAmenityRepository = placeAmenityRepository;
+    this.performanceRankingRepository = performanceRankingRepository;
   }
 
   // 큐레이션 탭(데이트/숙박 카드)용 조회 API. matchScore는 아직 항상 null - 로그인 유저 성향값을
@@ -81,11 +86,15 @@ public class PlaceController {
             Collectors.mapping(PlaceAmenity::getAmenityTag, Collectors.toList())
         ));
 
+    Map<Long, PerformanceRanking> rankingByPlaceId = performanceRankingRepository.findByPlace_IdIn(placeIds).stream()
+        .collect(Collectors.toMap(r -> r.getPlace().getId(), r -> r));
+
     return ResponseEntity.ok(page.map(place -> {
       PlaceCategory placeCategory = place.getPlaceCategory();
       PlaceReality reality = realityByPlaceId.get(place.getId());
       List<String> amenities = amenitiesByPlaceId.getOrDefault(place.getId(), List.of());
-      return CurationPlaceDto.from(place, placeCategory, reality, amenities);
+      PerformanceRanking ranking = rankingByPlaceId.get(place.getId());
+      return CurationPlaceDto.from(place, placeCategory, reality, amenities, ranking);
     }));
   }
 
@@ -175,12 +184,16 @@ public class PlaceController {
             Collectors.mapping(PlaceAmenity::getAmenityTag, Collectors.toList())
         ));
 
+    Map<Long, PerformanceRanking> rankingByPlaceId = performanceRankingRepository.findByPlace_IdIn(placeIds).stream()
+        .collect(Collectors.toMap(r -> r.getPlace().getId(), r -> r));
+
     List<CurationPlaceDto> result = filtered.stream()
         .map(place -> CurationPlaceDto.from(
             place,
             place.getPlaceCategory(),
             realityByPlaceId.get(place.getId()),
-            amenitiesByPlaceId.getOrDefault(place.getId(), List.of())
+            amenitiesByPlaceId.getOrDefault(place.getId(), List.of()),
+            rankingByPlaceId.get(place.getId())
         ))
         .toList();
     return ResponseEntity.ok(result);

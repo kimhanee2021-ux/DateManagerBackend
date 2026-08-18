@@ -1,5 +1,6 @@
 package org.ict.datemanagerbackend.domain.place.dto;
 
+import org.ict.datemanagerbackend.domain.place.entity.PerformanceRanking;
 import org.ict.datemanagerbackend.domain.place.entity.Place;
 import org.ict.datemanagerbackend.domain.place.entity.PlaceAmenity;
 import org.ict.datemanagerbackend.domain.place.entity.PlaceCategory;
@@ -27,14 +28,16 @@ public record CurationPlaceDto(
     List<String> amenities,
     String bookingUrl,
     String runtimeText,
-    Integer matchScore
+    Integer matchScore,
+    Integer boxOfficeRank
 ) {
 
   public static CurationPlaceDto from(
       Place place,
       PlaceCategory category,
       PlaceReality reality,
-      List<String> amenities
+      List<String> amenities,
+      PerformanceRanking ranking
   ) {
     return new CurationPlaceDto(
         place.getId(),
@@ -51,7 +54,8 @@ public record CurationPlaceDto(
         amenities,
         place.getBookingUrl(),
         place.getRuntimeText(),
-        null
+        null,
+        ranking != null ? ranking.getRankNo() : null
     );
   }
 }
