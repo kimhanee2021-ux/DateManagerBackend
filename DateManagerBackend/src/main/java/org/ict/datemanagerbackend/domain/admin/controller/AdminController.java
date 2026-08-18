@@ -9,6 +9,7 @@ import org.ict.datemanagerbackend.domain.place.repository.PlaceCategoryRepositor
 import org.ict.datemanagerbackend.domain.place.repository.PlaceRepository;
 import org.ict.datemanagerbackend.domain.place.service.CultureEventSyncService;
 import org.ict.datemanagerbackend.domain.place.service.KakaoPlaceSyncService;
+import org.ict.datemanagerbackend.domain.place.service.LodgingCsvSyncService;
 import org.ict.datemanagerbackend.domain.place.service.MuseumSyncService;
 import org.ict.datemanagerbackend.domain.place.service.NaverPlaceSyncService;
 import org.ict.datemanagerbackend.domain.place.service.PlaceSyncService;
@@ -66,6 +67,7 @@ public class AdminController {
     private final MuseumSyncService museumSyncService;
     private final NaverPlaceSyncService naverPlaceSyncService;
     private final KakaoPlaceSyncService kakaoPlaceSyncService;
+    private final LodgingCsvSyncService lodgingCsvSyncService;
     private final CultureEventSyncService cultureEventSyncService;
     private final ReportRepository reportRepository;
     private final SubscriptionRepository subscriptionRepository;
@@ -80,6 +82,7 @@ public class AdminController {
                             PlaceSyncService placeSyncService, TourApiSyncService tourApiSyncService,
                             MuseumSyncService museumSyncService, NaverPlaceSyncService naverPlaceSyncService,
                             KakaoPlaceSyncService kakaoPlaceSyncService,
+                            LodgingCsvSyncService lodgingCsvSyncService,
                             CultureEventSyncService cultureEventSyncService,
                             ReportRepository reportRepository,
                             SubscriptionRepository subscriptionRepository, LoginLogRepository loginLogRepository) {
@@ -93,6 +96,7 @@ public class AdminController {
         this.museumSyncService = museumSyncService;
         this.naverPlaceSyncService = naverPlaceSyncService;
         this.kakaoPlaceSyncService = kakaoPlaceSyncService;
+        this.lodgingCsvSyncService = lodgingCsvSyncService;
         this.cultureEventSyncService = cultureEventSyncService;
         this.reportRepository = reportRepository;
         this.subscriptionRepository = subscriptionRepository;
@@ -387,8 +391,9 @@ public class AdminController {
                 case "naver" -> naverPlaceSyncService.syncPlaces();
                 case "kakao" -> kakaoPlaceSyncService.syncPlaces();
                 case "cultureinfo" -> cultureEventSyncService.syncEvents();
+                case "lodging" -> lodgingCsvSyncService.syncFromCsv();
                 default -> {
-                    return ResponseEntity.badRequest().body(Map.of("error", "source는 kopis, festival, tourapi, museum, naver, kakao, cultureinfo 중 하나여야 합니다"));
+                    return ResponseEntity.badRequest().body(Map.of("error", "source는 kopis, festival, tourapi, museum, naver, kakao, cultureinfo, lodging 중 하나여야 합니다"));
                 }
             }
         } catch (Exception e) {

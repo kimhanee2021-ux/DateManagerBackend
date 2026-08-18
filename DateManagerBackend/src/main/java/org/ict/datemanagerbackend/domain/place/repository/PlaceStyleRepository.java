@@ -16,4 +16,8 @@ public interface PlaceStyleRepository extends JpaRepository<PlaceStyle, Long> {
   // 한 번에 모아서 조회한다.
   List<PlaceStyle> findByPlace_IdIn(List<Long> placeIds);
 
+  // 특정 소스(LODGING_STD 등)를 통째로 재동기화하기 전에, 그 장소들의 성향점수 행부터 먼저 지운다.
+  // place_styles가 매 장소마다 자동 생성돼 있어서, 이걸 먼저 안 지우면 Place 삭제 시 FK 위반이 난다.
+  void deleteByPlace_ExternalSource(String externalSource);
+
 }
