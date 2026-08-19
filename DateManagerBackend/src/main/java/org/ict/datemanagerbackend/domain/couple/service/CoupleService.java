@@ -1,10 +1,12 @@
 package org.ict.datemanagerbackend.domain.couple.service;
 
 import org.ict.datemanagerbackend.domain.couple.dto.Response.CoupleInviteResponse;
+import org.ict.datemanagerbackend.domain.couple.dto.Response.CoupleNotificationDto;
 import org.ict.datemanagerbackend.domain.couple.dto.Response.CoupleStatusResponse;
 import org.ict.datemanagerbackend.domain.user.entity.User;
 
 import java.time.LocalDate;
+import java.util.List;
 
 /**
  * 커플 초대 링크 생성/수락, 연결 상태 조회, 연결 해제를 담당하는 서비스.
@@ -44,4 +46,11 @@ public interface CoupleService {
 
   // <<커플 관계를 끊는다(소프트 삭제 - CoupleMember.left_at 기록 + Couple.status=DISCONNECTED)>>
   void disconnect(User me);
+
+  // <<파트너 액션(초대 수락/만난 날짜 입력) 안 읽은 알림을 최신순으로 조회한다. 2026-08-18
+  // feature/partner-notification 브랜치에서 만들었다가 2026-08-19에 이 구조로 옮겨서 합침>>
+  List<CoupleNotificationDto> getUnreadNotifications(User me);
+
+  // <<내가 갖고 있던 안 읽은 알림을 전부 읽음 처리한다>>
+  void markAllNotificationsRead(User me);
 }

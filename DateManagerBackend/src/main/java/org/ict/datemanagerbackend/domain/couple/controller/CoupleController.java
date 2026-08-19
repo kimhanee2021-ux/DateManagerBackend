@@ -109,4 +109,23 @@ public class CoupleController {
       return ResponseEntity.status(e.getStatus()).body(Map.of("error", e.getMessage()));
     }
   }
+
+  @GetMapping("/notifications/unread")
+  public ResponseEntity<?> getUnreadNotifications(Authentication authentication) {
+    User me = currentUser(authentication);
+    if (me == null) {
+      return ResponseEntity.status(404).body(Map.of("error", "사용자를 찾을 수 없습니다"));
+    }
+    return ResponseEntity.ok(coupleService.getUnreadNotifications(me));
+  }
+
+  @PostMapping("/notifications/read-all")
+  public ResponseEntity<?> markAllNotificationsRead(Authentication authentication) {
+    User me = currentUser(authentication);
+    if (me == null) {
+      return ResponseEntity.status(404).body(Map.of("error", "사용자를 찾을 수 없습니다"));
+    }
+    coupleService.markAllNotificationsRead(me);
+    return ResponseEntity.ok(Map.of("success", true));
+  }
 }

@@ -2,13 +2,16 @@ package org.ict.datemanagerbackend.domain.couple.service;
 
 import lombok.RequiredArgsConstructor;
 import org.ict.datemanagerbackend.domain.couple.dto.Response.CoupleInviteResponse;
+import org.ict.datemanagerbackend.domain.couple.dto.Response.CoupleNotificationDto;
 import org.ict.datemanagerbackend.domain.couple.dto.Response.CouplePartnerDto;
 import org.ict.datemanagerbackend.domain.couple.dto.Response.CoupleStatusResponse;
 import org.ict.datemanagerbackend.domain.couple.entity.Couple;
 import org.ict.datemanagerbackend.domain.couple.entity.CoupleInvite;
 import org.ict.datemanagerbackend.domain.couple.entity.CoupleMember;
+import org.ict.datemanagerbackend.domain.couple.entity.CoupleNotification;
 import org.ict.datemanagerbackend.domain.couple.repository.CoupleInviteRepository;
 import org.ict.datemanagerbackend.domain.couple.repository.CoupleMemberRepository;
+import org.ict.datemanagerbackend.domain.couple.repository.CoupleNotificationRepository;
 import org.ict.datemanagerbackend.domain.couple.repository.CoupleRepository;
 import org.ict.datemanagerbackend.domain.user.entity.User;
 import org.springframework.beans.factory.annotation.Value;
@@ -30,6 +33,7 @@ public class CoupleServiceImpl implements CoupleService {
   private final CoupleRepository coupleRepository;
   private final CoupleMemberRepository coupleMemberRepository;
   private final CoupleInviteRepository coupleInviteRepository;
+  private final CoupleNotificationRepository coupleNotificationRepository;
 
   // application.yaml의 app.frontend-base-url을 그대로 주입받아, 초대 토큰을 실제 클릭 가능한
   // URL(프론트 주소 + /couple/connect/{token})로 조립하는 데 사용한다.
@@ -130,6 +134,13 @@ public class CoupleServiceImpl implements CoupleService {
     invite.setCouple(couple);
     coupleInviteRepository.save(invite);
 
+    // 초대한 사람(A)에게 "상대방이 수락해서 연결됐다"는 걸 다음 로그인 때 알려주기 위한 알림.
+    coupleNotificationRepository.save(CoupleNotification.builder()
+        .recipient(invite.getInviter())
+        .type("PARTNER_ACCEPTED")
+        .message((me.getNickname() != null ? me.getNickname() : "파트너") + "님이 초대를 수락해서 연결됐어요!")
+        .build());
+
     return couple.getId();
   }
 
@@ -180,6 +191,19 @@ public class CoupleServiceImpl implements CoupleService {
     Couple couple = myMembership.get().getCouple();
     couple.setMetDate(metDate);
     coupleRepository.save(couple);
+
+    // 상대방에게 "파트너가 만난 날짜를 입력했다"고 알려준다. metDate를 지우는(null) 경우는
+    // 알림을 보낼 만한 새 정보가 아니므로 실제로 값이 채워졌을 때만 생성한다.
+    if (metDate != null) {
+      coupleMemberRepository.findByCoupleId(couple.getId()).stream()
+          .filter(m -> m.getLeftAt() == null && !m.getUser().getId().equals(me.getId()))
+          .findFirst()
+          .ifPresent(partnerMembership -> coupleNotificationRepository.save(CoupleNotification.builder()
+              .recipient(partnerMembership.getUser())
+              .type("PARTNER_MET_DATE_SET")
+              .message((me.getNickname() != null ? me.getNickname() : "파트너") + "님이 만난 날짜를 입력했어요")
+              .build()));
+    }
   }
 
   /**
@@ -195,10 +219,20 @@ public class CoupleServiceImpl implements CoupleService {
     }
 
     Couple couple = myMembership.get().getCouple();
+    List<CoupleMember> members = coupleMemberRepository.findByCoupleId(couple.getId());
+
+    // left_at을 기록해버리기 전에 미리 상대방을 찾아둔다 - 아래 루프가 끝나고 나면 두 멤버
+    // 모두 left_at이 채워져서 "누가 상대방이었는지"를 더 이상 구분할 수 없기 때문이다.
+    User partner = members.stream()
+        .filter(m -> m.getLeftAt() == null && !m.getUser().getId().equals(me.getId()))
+        .map(CoupleMember::getUser)
+        .findFirst()
+        .orElse(null);
+
     LocalDateTime now = LocalDateTime.now();
     // 나뿐 아니라 상대방의 멤버십에도 left_at을 기록해야 두 사람 모두 "미연결" 상태가 된다.
     // (내 것만 지우면 상대방 화면에서는 여전히 "연결됨"으로 보이는 반쪽짜리 해제가 되어버림)
-    for (CoupleMember member : coupleMemberRepository.findByCoupleId(couple.getId())) {
+    for (CoupleMember member : members) {
       if (member.getLeftAt() == null) {
         member.setLeftAt(now);
         coupleMemberRepository.save(member);
@@ -206,5 +240,31 @@ public class CoupleServiceImpl implements CoupleService {
     }
     couple.setStatus("DISCONNECTED");
     coupleRepository.save(couple);
+
+    // 상대방에게 연결이 끊겼다는 걸 다음 로그인 때 알려준다. "OOO님이 해제했어요"처럼
+    // 행위자를 지목하면 통보받는 입장에서 비난받는 느낌이 들 수 있어, 누가 눌렀는지는
+    // 밝히지 않고 사실만 담담하게 전달한다.
+    if (partner != null) {
+      coupleNotificationRepository.save(CoupleNotification.builder()
+          .recipient(partner)
+          .type("PARTNER_DISCONNECTED")
+          .message("커플 연결이 해제됐어요")
+          .build());
+    }
+  }
+
+  @Override
+  public List<CoupleNotificationDto> getUnreadNotifications(User me) {
+    return coupleNotificationRepository.findByRecipient_IdAndReadFalseOrderByCreatedAtDesc(me.getId()).stream()
+        .map(n -> new CoupleNotificationDto(n.getId(), n.getType(), n.getMessage(), n.getCreatedAt()))
+        .toList();
+  }
+
+  @Override
+  public void markAllNotificationsRead(User me) {
+    List<CoupleNotification> unread =
+        coupleNotificationRepository.findByRecipient_IdAndReadFalseOrderByCreatedAtDesc(me.getId());
+    unread.forEach(n -> n.setRead(true));
+    coupleNotificationRepository.saveAll(unread);
   }
 }
