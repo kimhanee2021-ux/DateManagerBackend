@@ -6,6 +6,7 @@ import jakarta.persistence.FetchType;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
+import jakarta.persistence.Index;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
@@ -27,6 +28,12 @@ import java.time.LocalDateTime;
     name = "places",
     uniqueConstraints = {
         @UniqueConstraint(name = "uq_places_external", columnNames = {"external_source", "external_id"})
+    },
+    // 중복 장소 판단(PlaceDedupService.findDuplicate)이 매 동기화마다 위경도 범위로 findNearby를
+    // 호출하는데, 인덱스가 없어서 8만여 건 전체를 스캔해야 했다 - 숙박 CSV 3만 건을 재동기화할 때
+    // 이 조회가 3만 번 반복되면서 동기화 하나에 수십 분이 걸리는 문제가 있었다(2026-08-19).
+    indexes = {
+        @Index(name = "idx_places_lat_lng", columnList = "latitude, longitude")
     }
 )
 @Getter

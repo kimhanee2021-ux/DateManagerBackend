@@ -35,6 +35,21 @@ import java.util.stream.Collectors;
 @RequestMapping("/api/places")
 public class PlaceController {
 
+  // 지역 통합(2026-08-19) - 충북/충남은 대전, 경북/경남은 대구 칩 하나로 묶어서 보여준다. 실제로는
+  // 대전/대구 자체 데이터가 아니라 충청북도/충청남도/경상북도/경상남도(정식 행정구역명) 데이터가
+  // 훨씬 많은데(각 2,800~6,000건), 두 지역씩 4개 칩으로 쪼개기엔 앱 성격상 너무 세분화된다고 판단해
+  // "대전"/"대구"를 고르면 그 지역들 데이터까지 같이 보여주는 방식으로 합쳤다.
+  private static final Map<String, List<String>> MERGED_REGION_KEYWORDS = Map.of(
+      "대전", List.of("대전", "충청북도", "충청남도"),
+      "대구", List.of("대구", "경상북도", "경상남도")
+  );
+
+  // region 하나를 최대 3개의 address LIKE 키워드로 펼친다. 통합 대상이 아니면 그 값 하나만 담긴
+  // 리스트를 돌려준다 - 호출부는 통합 여부를 신경 쓸 필요 없이 항상 이 결과만 쓰면 된다.
+  private static List<String> expandRegion(String region) {
+    return MERGED_REGION_KEYWORDS.getOrDefault(region, List.of(region));
+  }
+
   private final PlaceRepository placeRepository;
   private final PlaceStyleRepository placeStyleRepository;
   private final PlaceRealityRepository placeRealityRepository;
@@ -61,36 +76,36 @@ public class PlaceController {
   // 나뉘어 있는 경우를 프론트가 한 번에 필터링하기 위해서다(2026-08-14).
   // region은 지역 필터용(2026-08-19) - 별도 시/도 컬럼이 없어서 address에 이 문자열이 포함되는
   // 장소만 남긴다(예: region=서울 -> "서울특별시 ..." 주소만 통과).
+  // keyword는 장소 이름 검색용(2026-08-19) - 지역/카테고리 필터와 AND로 조합된다(예: 제주 지역
+  // 필터를 걸어둔 채로 검색하면 제주 안에서만 이름이 매치되는 장소를 찾는다).
+  // district는 서울/경기/부산 등에서 한 단계 더 좁히는 구/시 필터(예: "중구") - "중구"/"동구"/
+  // "고성군" 같은 이름은 여러 시/도가 똑같이 쓰기 때문에, 이 값 하나만으로는 다른 지역이 섞여
+  // 들어올 수 있어 반드시 region과 함께 AND로 넘겨야 한다(PlaceRepository.searchByCategoryIn 참고).
   @GetMapping("/curation")
   public ResponseEntity<Page<CurationPlaceDto>> listCurationPlaces(
       @RequestParam(required = false) String category,
       @RequestParam(required = false) String subCategory,
       @RequestParam(required = false) String region,
+      @RequestParam(required = false) String district,
+      @RequestParam(required = false) String keyword,
       @PageableDefault(size = 20, sort = "id", direction = Sort.Direction.DESC) Pageable pageable) {
-    boolean hasRegion = region != null && !region.isBlank();
     boolean hasCategory = category != null && !category.isBlank();
     boolean hasSubCategory = subCategory != null && !subCategory.isBlank();
     List<String> categories = hasCategory ? List.of(category.split(",")) : null;
 
-    Page<Place> page;
-    if (hasRegion) {
-      if (hasCategory && hasSubCategory) {
-        page = placeRepository.findByCategoryInAndPlaceCategory_SubCategoryAndAddressContaining(
-            categories, subCategory, region, pageable);
-      } else if (hasCategory) {
-        page = placeRepository.findByCategoryInAndAddressContaining(categories, region, pageable);
-      } else {
-        page = placeRepository.findByAddressContaining(region, pageable);
-      }
-    } else if (hasCategory && hasSubCategory) {
-      page = placeRepository.findByCategoryAndPlaceCategory_SubCategory(category, subCategory, pageable);
-    } else if (!hasCategory) {
-      page = placeRepository.findAll(pageable);
-    } else if (hasCategory && categories.size() > 1) {
-      page = placeRepository.findByCategoryIn(categories, pageable);
-    } else {
-      page = placeRepository.findByCategory(category, pageable);
-    }
+    // region이 없으면 빈 문자열을 r1으로 넘긴다 - address LIKE '%%'는 모든 행에 걸리므로
+    // "지역 필터 없음"과 같은 효과를 낸다(PlaceRepository.searchByCategoryIn 주석 참고).
+    List<String> regionKeywords = (region == null || region.isBlank()) ? List.of("") : expandRegion(region);
+    String r1 = regionKeywords.get(0);
+    String r2 = regionKeywords.size() > 1 ? regionKeywords.get(1) : null;
+    String r3 = regionKeywords.size() > 2 ? regionKeywords.get(2) : null;
+    String districtFilter = (district == null || district.isBlank()) ? null : district;
+    String keywordFilter = (keyword == null || keyword.isBlank()) ? null : keyword;
+
+    Page<Place> page = hasCategory
+        ? placeRepository.searchByCategoryIn(
+            categories, hasSubCategory ? subCategory : null, r1, r2, r3, districtFilter, keywordFilter, pageable)
+        : placeRepository.searchAll(r1, r2, r3, districtFilter, keywordFilter, pageable);
 
     List<Long> placeIds = page.getContent().stream().map(Place::getId).toList();
 
@@ -184,6 +199,8 @@ public class PlaceController {
       @RequestParam(required = false) String category,
       @RequestParam(required = false) String subCategory,
       @RequestParam(required = false) String region,
+      @RequestParam(required = false) String district,
+      @RequestParam(required = false) String keyword,
       @RequestParam(defaultValue = "30") int limit) {
     int pool = Math.max(limit * 20, 500);
     List<Place> candidates = placeRepository.findNearestPlaces(lat, lon, pool);
@@ -192,12 +209,18 @@ public class PlaceController {
         ? null
         : List.of(category.split(","));
 
+    List<String> regionKeywords = (region == null || region.isBlank()) ? null : expandRegion(region);
+
     List<Place> filtered = candidates.stream()
         .filter(place -> categories == null || categories.contains(place.getCategory()))
         .filter(place -> subCategory == null || subCategory.isBlank()
             || (place.getPlaceCategory() != null && subCategory.equals(place.getPlaceCategory().getSubCategory())))
-        .filter(place -> region == null || region.isBlank()
-            || (place.getAddress() != null && place.getAddress().contains(region)))
+        .filter(place -> regionKeywords == null
+            || (place.getAddress() != null && regionKeywords.stream().anyMatch(place.getAddress()::contains)))
+        .filter(place -> district == null || district.isBlank()
+            || (place.getAddress() != null && place.getAddress().contains(district)))
+        .filter(place -> keyword == null || keyword.isBlank()
+            || (place.getName() != null && place.getName().contains(keyword)))
         .limit(limit)
         .toList();
 
@@ -233,11 +256,21 @@ public class PlaceController {
   // 세는 건 비효율적이라 DB에서 GROUP BY로 바로 집계한다(AdminController의 같은 패턴 재사용).
   // region이 있으면 그 지역 안에서만 집계한다(2026-08-19) - 없으면 예전처럼 전국 집계.
   @GetMapping("/category-counts")
-  public ResponseEntity<Map<String, Long>> getCategoryCounts(@RequestParam(required = false) String region) {
+  public ResponseEntity<Map<String, Long>> getCategoryCounts(
+      @RequestParam(required = false) String region, @RequestParam(required = false) String district) {
     boolean hasRegion = region != null && !region.isBlank();
-    List<Object[]> rows = hasRegion
-        ? placeRepository.countGroupedByCategoryAndAddressContaining(region)
-        : placeRepository.countGroupedByCategory();
+    String districtFilter = (district == null || district.isBlank()) ? null : district;
+    List<Object[]> rows;
+    if (hasRegion) {
+      List<String> regionKeywords = expandRegion(region);
+      rows = placeRepository.countGroupedByCategoryAndAddressContaining(
+          regionKeywords.get(0),
+          regionKeywords.size() > 1 ? regionKeywords.get(1) : null,
+          regionKeywords.size() > 2 ? regionKeywords.get(2) : null,
+          districtFilter);
+    } else {
+      rows = placeRepository.countGroupedByCategory();
+    }
 
     Map<String, Long> counts = new java.util.LinkedHashMap<>();
     for (Object[] row : rows) {
@@ -249,11 +282,22 @@ public class PlaceController {
   // 숙박 탭처럼 대분류 하나를 세부분류 칩으로 한 번 더 쪼개서 보여줄 때 쓰는 개수 집계 API.
   @GetMapping("/category-counts/sub")
   public ResponseEntity<Map<String, Long>> getSubCategoryCounts(
-      @RequestParam String category, @RequestParam(required = false) String region) {
+      @RequestParam String category, @RequestParam(required = false) String region,
+      @RequestParam(required = false) String district) {
     boolean hasRegion = region != null && !region.isBlank();
-    List<Object[]> rows = hasRegion
-        ? placeRepository.countGroupedBySubCategoryAndAddressContaining(category, region)
-        : placeRepository.countGroupedBySubCategory(category);
+    String districtFilter = (district == null || district.isBlank()) ? null : district;
+    List<Object[]> rows;
+    if (hasRegion) {
+      List<String> regionKeywords = expandRegion(region);
+      rows = placeRepository.countGroupedBySubCategoryAndAddressContaining(
+          category,
+          regionKeywords.get(0),
+          regionKeywords.size() > 1 ? regionKeywords.get(1) : null,
+          regionKeywords.size() > 2 ? regionKeywords.get(2) : null,
+          districtFilter);
+    } else {
+      rows = placeRepository.countGroupedBySubCategory(category);
+    }
 
     Map<String, Long> counts = new java.util.LinkedHashMap<>();
     for (Object[] row : rows) {
