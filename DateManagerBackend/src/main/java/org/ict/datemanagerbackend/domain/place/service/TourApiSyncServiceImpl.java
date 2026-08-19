@@ -78,6 +78,17 @@ public class TourApiSyncServiceImpl implements TourApiSyncService {
     return name != null && MEDICAL_KEYWORDS.stream().anyMatch(name::contains);
   }
 
+  // 안경점(체인 몇 개는 이미 BLACKLISTED_NAME_KEYWORDS에 있었지만 개별 매장이 훨씬 많음)과
+  // 담배/전자담배 판매점도 데이트 장소가 아니라서 제외한다(2026-08-19, 사용자 요청). 위 병의원과
+  // 같은 이유로 쇼핑 카테고리에서만 걸러낸다 - "안경"은 다른 카테고리에서 지명 등에 우연히
+  // 섞일 가능성을 배제할 수 없어서다. 실측으로 "안경"/"담배"/"베이프" 세 키워드 모두 오탐(예:
+  // "글로벌"처럼 무관한 단어에 걸리는 경우) 없이 깔끔하게 골라짐을 확인함.
+  private static final List<String> EXCLUDED_SHOPPING_KEYWORDS = List.of("안경", "담배", "베이프");
+
+  private boolean isExcludedShoppingKeyword(String name) {
+    return name != null && EXCLUDED_SHOPPING_KEYWORDS.stream().anyMatch(name::contains);
+  }
+
   // 백화점/아울렛 안에 입점한 개별 브랜드 매장(예: "로에베 현대백화점 압구정본점",
   // "스케쳐스 롯데아울렛 동부산점")이 TourAPI 쇼핑(38) 카테고리에 통째로 섞여 들어온다 - 실측 결과
   // 고유 백화점 지점 65곳에 딸린 브랜드 매장이 1,791건, 아울렛 쪽도 같은 패턴으로 다수 확인됨
@@ -92,8 +103,12 @@ public class TourApiSyncServiceImpl implements TourApiSyncService {
       "현대프리미엄아울렛", "뉴코아아울렛", "뉴코아팩토리아울렛", "2001아울렛"
   );
 
+  // 스타필드도 같은 문제라 여기 합쳤다(2026-08-19) - "스타필드"가 들어간 쇼핑 카테고리 장소 144건을
+  // 실제로 까보니 전부 "브랜드명 스타필드 하남점"처럼 안의 개별 매장이고, 몰 자체("스타필드 하남" 등)는
+  // 단 하나도 없었다(스타필드는 TourAPI가 몰 자체를 별도 장소로 안 주는 듯). 그래서 MALL_PREFIXES에
+  // 넣어서 예외로 지켜줄 이름이 없어 - "스타필드"가 들어간 쇼핑 카테고리는 전부 걸러낸다.
   private boolean isBrandInsideMall(String name) {
-    if (name == null || !(name.contains("백화점") || name.contains("아울렛"))) {
+    if (name == null || !(name.contains("백화점") || name.contains("아울렛") || name.contains("스타필드"))) {
       return false;
     }
     return MALL_PREFIXES.stream().noneMatch(name::startsWith);
@@ -160,7 +175,7 @@ public class TourApiSyncServiceImpl implements TourApiSyncService {
 
       for (TourApiPlaceDto p : places) {
         if (isBlacklisted(p.title()) || isBrandInsideMall(p.title()) || franchiseBrandKeys.contains(brandKey(p.title()))
-            || (isShoppingCategory && isMedicalFacility(p.title()))) {
+            || (isShoppingCategory && (isMedicalFacility(p.title()) || isExcludedShoppingKeyword(p.title())))) {
           continue;
         }
 
@@ -170,7 +185,8 @@ public class TourApiSyncServiceImpl implements TourApiSyncService {
         Double lat = parseCoordinate(p.mapy());
         Double lng = parseCoordinate(p.mapx());
         String image = !p.firstimage().isBlank() ? p.firstimage() : p.firstimage2();
-        String address = p.addr2().isBlank() ? p.addr1() : (p.addr1() + " " + p.addr2()).trim();
+        String address = PlaceAddressNormalizer.fix(
+            p.addr2().isBlank() ? p.addr1() : (p.addr1() + " " + p.addr2()).trim());
 
         if (existing.isPresent()) {
           Place place = existing.get();
@@ -263,6 +279,21 @@ public class TourApiSyncServiceImpl implements TourApiSyncService {
     // 쇼핑에 잘못 섞여 들어온 병의원 정리(2026-08-19) - isMedicalFacility 참고.
     for (Place place : placeRepository.findByCategory("쇼핑", org.springframework.data.domain.Pageable.unpaged())) {
       if (!isMedicalFacility(place.getName())) {
+        continue;
+      }
+      try {
+        placeStyleRepository.findByPlace_Id(place.getId()).ifPresent(placeStyleRepository::delete);
+        placeRepository.delete(place);
+        placeRepository.flush();
+        deleted++;
+      } catch (DataIntegrityViolationException e) {
+        skipped++;
+      }
+    }
+
+    // 쇼핑 중 안경점/담배·전자담배 판매점 정리(2026-08-19) - isExcludedShoppingKeyword 참고.
+    for (Place place : placeRepository.findByCategory("쇼핑", org.springframework.data.domain.Pageable.unpaged())) {
+      if (!isExcludedShoppingKeyword(place.getName())) {
         continue;
       }
       try {

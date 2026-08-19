@@ -85,7 +85,7 @@ public class LodgingCsvSyncServiceImpl implements LodgingCsvSyncService {
         }
 
         String name = record.get("사업장명");
-        String address = record.get("주소");
+        String address = PlaceAddressNormalizer.fix(record.get("주소"));
         Double lat = parseCoordinate(record.get("위도"));
         Double lon = parseCoordinate(record.get("경도"));
 
