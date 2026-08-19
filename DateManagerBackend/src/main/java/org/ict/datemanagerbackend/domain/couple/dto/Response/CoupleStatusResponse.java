@@ -1,4 +1,4 @@
-package org.ict.datemanagerbackend.domain.couple.dto;
+package org.ict.datemanagerbackend.domain.couple.dto.Response;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;

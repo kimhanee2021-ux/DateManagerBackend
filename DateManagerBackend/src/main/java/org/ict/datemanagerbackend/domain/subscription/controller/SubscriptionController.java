@@ -1,5 +1,7 @@
 package org.ict.datemanagerbackend.domain.subscription.controller;
 
+import org.ict.datemanagerbackend.domain.subscription.dto.Request.IssueBillingKeyRequest;
+import org.ict.datemanagerbackend.domain.subscription.dto.Response.SubscriptionDto;
 import org.ict.datemanagerbackend.domain.subscription.entity.Subscription;
 import org.ict.datemanagerbackend.domain.user.entity.User;
 import org.ict.datemanagerbackend.domain.user.repository.UserRepository;
@@ -13,7 +15,6 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.client.HttpStatusCodeException;
 
-import java.time.LocalDateTime;
 import java.util.Map;
 
 // 구독(정기결제) API. 결제 흐름:
@@ -35,14 +36,6 @@ public class SubscriptionController {
     public SubscriptionController(UserRepository userRepository, SubscriptionService subscriptionService) {
         this.userRepository = userRepository;
         this.subscriptionService = subscriptionService;
-    }
-
-    public record IssueBillingKeyRequest(String authKey, String customerKey, String planCode) {
-    }
-
-    public record SubscriptionDto(Long id, String planCode, String status, LocalDateTime startedAt,
-                                   LocalDateTime expiresAt, String paymentProvider, boolean hasBillingKey,
-                                   String lastPaymentStatus, String lastPaymentError) {
     }
 
     @GetMapping("/me")

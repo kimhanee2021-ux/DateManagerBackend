@@ -1,9 +1,9 @@
 package org.ict.datemanagerbackend.domain.couple.service;
 
 import lombok.RequiredArgsConstructor;
-import org.ict.datemanagerbackend.domain.couple.dto.CoupleInviteResponse;
-import org.ict.datemanagerbackend.domain.couple.dto.CouplePartnerDto;
-import org.ict.datemanagerbackend.domain.couple.dto.CoupleStatusResponse;
+import org.ict.datemanagerbackend.domain.couple.dto.Response.CoupleInviteResponse;
+import org.ict.datemanagerbackend.domain.couple.dto.Response.CouplePartnerDto;
+import org.ict.datemanagerbackend.domain.couple.dto.Response.CoupleStatusResponse;
 import org.ict.datemanagerbackend.domain.couple.entity.Couple;
 import org.ict.datemanagerbackend.domain.couple.entity.CoupleInvite;
 import org.ict.datemanagerbackend.domain.couple.entity.CoupleMember;

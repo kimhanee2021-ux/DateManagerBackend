@@ -1,7 +1,7 @@
 package org.ict.datemanagerbackend.domain.couple.service;
 
-import org.ict.datemanagerbackend.domain.couple.dto.CoupleInviteResponse;
-import org.ict.datemanagerbackend.domain.couple.dto.CoupleStatusResponse;
+import org.ict.datemanagerbackend.domain.couple.dto.Response.CoupleInviteResponse;
+import org.ict.datemanagerbackend.domain.couple.dto.Response.CoupleStatusResponse;
 import org.ict.datemanagerbackend.domain.user.entity.User;
 
 import java.time.LocalDate;

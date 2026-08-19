@@ -1,6 +1,8 @@
 package org.ict.datemanagerbackend.domain.aichat.controller;
 
 import lombok.RequiredArgsConstructor;
+import org.ict.datemanagerbackend.domain.aichat.dto.Response.AiChatMessageResponse;
+import org.ict.datemanagerbackend.domain.aichat.dto.Response.AiChatSessionResponse;
 import org.ict.datemanagerbackend.domain.aichat.entity.AiChatMessage;
 import org.ict.datemanagerbackend.domain.aichat.entity.AiChatSession;
 import org.ict.datemanagerbackend.domain.aichat.service.AiChatService;
@@ -10,7 +12,6 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
-import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 
@@ -42,12 +43,6 @@ public class AiChatController {
     }
   }
 
-  public record SessionResponse(Long sessionId, String title, LocalDateTime createdAt) {
-  }
-
-  public record MessageResponse(Long messageId, String senderType, String messageText, LocalDateTime createdAt) {
-  }
-
   /** POST /api/aichat/sessions - 새 채팅 세션 시작 */
   @PostMapping("/sessions")
   public ResponseEntity<?> createSession(Authentication authentication, @RequestBody(required = false) Map<String, String> body) {
@@ -57,7 +52,7 @@ public class AiChatController {
     }
     String title = body != null ? body.get("title") : null;
     AiChatSession session = aiChatService.createSession(me, title);
-    return ResponseEntity.ok(new SessionResponse(session.getId(), session.getTitle(), session.getCreatedAt()));
+    return ResponseEntity.ok(new AiChatSessionResponse(session.getId(), session.getTitle(), session.getCreatedAt()));
   }
 
   /** POST /api/aichat/sessions/{sessionId}/messages - 메시지 보내고 AI 응답 받기 */
@@ -78,7 +73,7 @@ public class AiChatController {
 
     try {
       AiChatMessage aiMessage = aiChatService.sendMessage(me, sessionId, text, lat, lon);
-      return ResponseEntity.ok(new MessageResponse(
+      return ResponseEntity.ok(new AiChatMessageResponse(
           aiMessage.getId(), aiMessage.getSenderType(), aiMessage.getMessageText(), aiMessage.getCreatedAt()));
     } catch (IllegalArgumentException e) {
       return ResponseEntity.status(404).body(Map.of("error", e.getMessage()));
@@ -96,8 +91,8 @@ public class AiChatController {
       return ResponseEntity.status(404).body(Map.of("error", "사용자를 찾을 수 없습니다"));
     }
     try {
-      List<MessageResponse> messages = aiChatService.getMessages(me, sessionId).stream()
-          .map(m -> new MessageResponse(m.getId(), m.getSenderType(), m.getMessageText(), m.getCreatedAt()))
+      List<AiChatMessageResponse> messages = aiChatService.getMessages(me, sessionId).stream()
+          .map(m -> new AiChatMessageResponse(m.getId(), m.getSenderType(), m.getMessageText(), m.getCreatedAt()))
           .toList();
       return ResponseEntity.ok(messages);
     } catch (IllegalArgumentException e) {

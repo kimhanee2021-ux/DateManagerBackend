@@ -1,6 +1,7 @@
 package org.ict.datemanagerbackend.domain.couple.controller;
 
-import org.ict.datemanagerbackend.domain.couple.dto.CoupleStatusResponse;
+import org.ict.datemanagerbackend.domain.couple.dto.Request.CoupleMetDateRequest;
+import org.ict.datemanagerbackend.domain.couple.dto.Response.CoupleStatusResponse;
 import org.ict.datemanagerbackend.domain.couple.service.CoupleActionException;
 import org.ict.datemanagerbackend.domain.couple.service.CoupleService;
 import org.ict.datemanagerbackend.domain.user.entity.User;
@@ -16,7 +17,6 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.time.LocalDate;
 import java.util.Map;
 
 // 커플 초대 링크 생성/수락, 연결 상태 조회, 연결 해제 API. 실제 검증/상태전이 로직은 전부
@@ -33,10 +33,6 @@ public class CoupleController {
   public CoupleController(UserRepository userRepository, CoupleService coupleService) {
     this.userRepository = userRepository;
     this.coupleService = coupleService;
-  }
-
-  // 만난 날짜 등록/수정(PUT /met-date) 요청. metDate가 null이면 등록 취소(초기화)로 처리한다.
-  public record MetDateRequest(LocalDate metDate) {
   }
 
   /**
@@ -87,7 +83,7 @@ public class CoupleController {
   }
 
   @PutMapping("/met-date")
-  public ResponseEntity<?> updateMetDate(Authentication authentication, @RequestBody MetDateRequest req) {
+  public ResponseEntity<?> updateMetDate(Authentication authentication, @RequestBody CoupleMetDateRequest req) {
     User me = currentUser(authentication);
     if (me == null) {
       return ResponseEntity.status(404).body(Map.of("error", "사용자를 찾을 수 없습니다"));
