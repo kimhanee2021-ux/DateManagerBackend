@@ -20,39 +20,31 @@ import java.time.LocalDateTime;
 
 public class UserCalendar {
   //PK 설정
-@Id
-@GeneratedValue(strategy = GenerationType.IDENTITY)
+  @Id
+  @GeneratedValue(strategy = GenerationType.IDENTITY)
   private Long id;
 
-//FK 설정
-@ManyToOne
-@JoinColumn(name = "user_id")
+  //FK 설정
+  @ManyToOne
+  @JoinColumn(name = "user_id")
   private User user;
 
-@Column(nullable = false,length = 100)
+  @Column(nullable = false,length = 100,name = "TITLE")
   private String title;
 
-@Column
+  @Column(name = "DESCRIPTION")
 //엄청 큰 4G 짜리라는 뜻.
-@Lob
+  @Lob
   private String description;
 
-@Column(nullable = false)
-private LocalDate targetDate;
+  @Column(nullable = false,name = "target_date")
+  private LocalDate targetDate;
 
-//미완성
-@Column
+  //미완성
+  @Column(name = "course_group_id")
   private Long courseGroupId;
 
-@Column(nullable = false,insertable = false,updatable = false)
-@ColumnDefault("SYSTIMESTAMP")
+  @Column(nullable = false,insertable = false,updatable = false,name = "CREATED_AT")
+  @ColumnDefault("SYSTIMESTAMP")
   private LocalDateTime createdAt;
-
-
-
-
-
-
-
-
 }

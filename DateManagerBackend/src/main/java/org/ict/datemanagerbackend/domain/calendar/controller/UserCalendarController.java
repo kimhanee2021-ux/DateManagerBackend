@@ -21,8 +21,8 @@ public class UserCalendarController {
 
   @PostMapping
   public ResponseEntity<UserCalendarResponse> createUserCalendar(@RequestBody UserCalendarCreateRequest userCalendarCreateRequest) {
-    UserCalendarResponse userCalendarResponse = userCalendarService.createUserCalendar(1L,userCalendarCreateRequest);
-  return ResponseEntity.status(201).body(userCalendarResponse);
+    UserCalendarResponse userCalendarResponse = userCalendarService.createUserCalendar(1L, userCalendarCreateRequest);
+    return ResponseEntity.status(201).body(userCalendarResponse);
   }
   @GetMapping
   public ResponseEntity<List<UserCalendarResponse>> getUserCalendar(@RequestParam LocalDate start,@RequestParam LocalDate end) {
