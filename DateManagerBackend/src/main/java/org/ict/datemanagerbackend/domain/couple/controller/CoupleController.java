@@ -128,4 +128,18 @@ public class CoupleController {
     coupleService.markAllNotificationsRead(me);
     return ResponseEntity.ok(Map.of("success", true));
   }
+
+  @PostMapping("/ack-admin-reconnect")
+  public ResponseEntity<?> ackAdminReconnect(Authentication authentication) {
+    User me = currentUser(authentication);
+    if (me == null) {
+      return ResponseEntity.status(404).body(Map.of("error", "사용자를 찾을 수 없습니다"));
+    }
+    try {
+      coupleService.ackAdminReconnect(me);
+      return ResponseEntity.ok(Map.of("success", true));
+    } catch (CoupleActionException e) {
+      return ResponseEntity.status(e.getStatus()).body(Map.of("error", e.getMessage()));
+    }
+  }
 }

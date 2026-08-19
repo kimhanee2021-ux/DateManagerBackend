@@ -30,14 +30,17 @@ public class AdminCoupleController {
     this.adminCoupleService = adminCoupleService;
   }
 
-  // filter: all(기본) / subscribed(멤버 중 구독자 있는 커플) / free(멤버 전원 비구독)
+  // filter: all(기본) / subscribed(멤버 중 구독자 있는 커플) / free(멤버 전원 비구독) - 구독 여부 기준
+  // status: active(기본) / all - 연결 상태 기준. 기본은 해제된 예전 커플을 안 보여주되,
+  // 관리자가 이력까지 보고 싶을 때는 status=all로 명시적으로 요청하게 한다.
   @GetMapping
   public ResponseEntity<?> listCouples(Authentication authentication,
-                                        @RequestParam(required = false, defaultValue = "all") String filter) {
+                                        @RequestParam(required = false, defaultValue = "all") String filter,
+                                        @RequestParam(required = false, defaultValue = "active") String status) {
     if (!adminAuthService.isAdmin(authentication)) {
       return ResponseEntity.status(403).body(Map.of("error", "관리자만 접근할 수 있습니다"));
     }
-    return ResponseEntity.ok(adminCoupleService.listCouples(filter));
+    return ResponseEntity.ok(adminCoupleService.listCouples(filter, status));
   }
 
   @PutMapping("/{id}")

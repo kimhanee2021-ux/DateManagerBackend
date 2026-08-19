@@ -45,7 +45,9 @@ public class AdminDashboardServiceImpl implements AdminDashboardService {
 
     long totalUsers = userRepository.countByWithdrawnAtIsNull();
     long totalSubscribers = subscriptionRepository.countByStatus("ACTIVE");
-    long totalCouples = coupleRepository.count();
+    // count()로 전체를 세면 연결 해제(DISCONNECTED)된 예전 커플까지 다 포함돼서 실제
+    // "매칭된 커플" 수보다 부풀려진다 - ACTIVE만 센다.
+    long totalCouples = coupleRepository.countByStatus("ACTIVE");
 
     Map<LocalDate, Set<Long>> visitorsByDay = new HashMap<>();
     for (LoginLog log : loginLogRepository.findByLoggedInAtAfter(windowStart)) {

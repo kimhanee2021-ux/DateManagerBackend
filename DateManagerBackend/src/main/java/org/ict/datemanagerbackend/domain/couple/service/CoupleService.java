@@ -53,4 +53,7 @@ public interface CoupleService {
 
   // <<내가 갖고 있던 안 읽은 알림을 전부 읽음 처리한다>>
   void markAllNotificationsRead(User me);
+
+  // <<관리자가 "다시 연결"해줬다는 배너를 확인 처리한다(reconnectedByAdminAt을 null로 되돌림)>>
+  void ackAdminReconnect(User me);
 }

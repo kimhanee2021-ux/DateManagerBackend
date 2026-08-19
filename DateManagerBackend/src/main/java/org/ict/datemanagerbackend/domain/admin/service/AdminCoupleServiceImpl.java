@@ -10,6 +10,7 @@ import org.ict.datemanagerbackend.domain.couple.repository.CoupleRepository;
 import org.ict.datemanagerbackend.domain.subscription.repository.SubscriptionRepository;
 import org.springframework.stereotype.Service;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.NoSuchElementException;
 import java.util.Set;
@@ -31,8 +32,9 @@ public class AdminCoupleServiceImpl implements AdminCoupleService {
   }
 
   @Override
-  public List<AdminCoupleDto> listCouples(String filter) {
+  public List<AdminCoupleDto> listCouples(String filter, String status) {
     return coupleRepository.findAll().stream()
+        .filter(c -> "all".equals(status) || "ACTIVE".equals(c.getStatus()))
         .map(this::toDto)
         .filter(dto -> matchesFilter(dto, filter))
         .toList();
@@ -44,8 +46,30 @@ public class AdminCoupleServiceImpl implements AdminCoupleService {
       throw new IllegalArgumentException("status는 ACTIVE 또는 DISCONNECTED 여야 합니다");
     }
     Couple couple = coupleRepository.findById(id).orElseThrow(() -> new NoSuchElementException("커플을 찾을 수 없습니다"));
+    boolean reactivating = "ACTIVE".equals(request.status());
+    LocalDateTime now = LocalDateTime.now();
     couple.setStatus(request.status());
+    if (reactivating) {
+      couple.setConnectedAt(now);
+      // 당사자들에게 "관리자가 방금 다시 연결해줬다"는 걸 보여주기 위한 플래그.
+      // 마이페이지/커플싱크탭이 이 값이 채워져 있으면 알림 배너를 띄우고,
+      // 확인하면 ack-admin-reconnect 엔드포인트가 다시 null로 되돌린다.
+      couple.setReconnectedByAdminAt(now);
+    } else {
+      // 해제할 땐 예전에 안 지워진 재연결 알림이 있었다면 같이 정리해준다(의미 없는 값이라).
+      couple.setReconnectedByAdminAt(null);
+    }
     coupleRepository.save(couple);
+
+    // 이용자 개인 화면(마이페이지/커플싱크탭)은 Couple.status가 아니라 CoupleMember.left_at으로
+    // 연결 여부를 판단한다(findByUser_IdAndLeftAtIsNull). 여기서 status만 바꾸고 left_at을
+    // 그대로 두면, 관리자 화면엔 "연결됨"으로 보여도 정작 당사자 화면엔 "연결 안 됨"으로 보이는
+    // (혹은 그 반대) 불일치가 생긴다 - 두 값이 항상 같이 움직이도록 여기서 맞춰준다.
+    for (CoupleMember member : coupleMemberRepository.findByCoupleId(id)) {
+      member.setLeftAt(reactivating ? null : now);
+      coupleMemberRepository.save(member);
+    }
+
     return toDto(couple);
   }
 
