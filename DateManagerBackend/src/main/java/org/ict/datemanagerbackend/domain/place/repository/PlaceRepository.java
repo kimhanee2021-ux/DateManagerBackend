@@ -31,6 +31,16 @@ public interface PlaceRepository extends JpaRepository<Place, Long> {
   // (2026-08-14, 숙박 카테고리 칩 복원하면서 추가).
   Page<Place> findByCategoryAndPlaceCategory_SubCategory(String category, String subCategory, Pageable pageable);
 
+  // 큐레이션 탭 지역 필터용(2026-08-19). 별도 시/도 컬럼이 없어서 address에 지역명이 포함되는지로
+  // 판단한다(예: "서울" -> "서울특별시 강남구 ..."에 포함됨). 카테고리 필터와 조합되는 3가지 경우를
+  // 각각 메서드로 둔다 - Spring Data가 메서드 이름만 보고 쿼리를 자동 생성해준다.
+  Page<Place> findByCategoryInAndAddressContaining(List<String> categories, String region, Pageable pageable);
+
+  Page<Place> findByCategoryInAndPlaceCategory_SubCategoryAndAddressContaining(
+      List<String> categories, String subCategory, String region, Pageable pageable);
+
+  Page<Place> findByAddressContaining(String region, Pageable pageable);
+
   // 숙박 탭 카테고리 칩에 "OO곳" 개수를 보여주기 위한 대분류 안 세부분류별 집계.
   // 세부분류가 아직 안 붙은(placeCategory가 null인) 장소는 이 결과에 안 잡힌다.
   @Query("SELECT p.placeCategory.subCategory, COUNT(p) FROM Place p "

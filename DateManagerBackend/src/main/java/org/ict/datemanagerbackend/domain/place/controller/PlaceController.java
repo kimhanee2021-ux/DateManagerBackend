@@ -59,18 +59,35 @@ public class PlaceController {
   // 대체 정렬한다.
   // category는 콤마로 여러 값을 묶어 보낼 수 있다 - "공연" 칩처럼 실제 DB 값이 여러 개(장르명)로
   // 나뉘어 있는 경우를 프론트가 한 번에 필터링하기 위해서다(2026-08-14).
+  // region은 지역 필터용(2026-08-19) - 별도 시/도 컬럼이 없어서 address에 이 문자열이 포함되는
+  // 장소만 남긴다(예: region=서울 -> "서울특별시 ..." 주소만 통과).
   @GetMapping("/curation")
   public ResponseEntity<Page<CurationPlaceDto>> listCurationPlaces(
       @RequestParam(required = false) String category,
       @RequestParam(required = false) String subCategory,
+      @RequestParam(required = false) String region,
       @PageableDefault(size = 20, sort = "id", direction = Sort.Direction.DESC) Pageable pageable) {
+    boolean hasRegion = region != null && !region.isBlank();
+    boolean hasCategory = category != null && !category.isBlank();
+    boolean hasSubCategory = subCategory != null && !subCategory.isBlank();
+    List<String> categories = hasCategory ? List.of(category.split(",")) : null;
+
     Page<Place> page;
-    if (category != null && !category.isBlank() && subCategory != null && !subCategory.isBlank()) {
+    if (hasRegion) {
+      if (hasCategory && hasSubCategory) {
+        page = placeRepository.findByCategoryInAndPlaceCategory_SubCategoryAndAddressContaining(
+            categories, subCategory, region, pageable);
+      } else if (hasCategory) {
+        page = placeRepository.findByCategoryInAndAddressContaining(categories, region, pageable);
+      } else {
+        page = placeRepository.findByAddressContaining(region, pageable);
+      }
+    } else if (hasCategory && hasSubCategory) {
       page = placeRepository.findByCategoryAndPlaceCategory_SubCategory(category, subCategory, pageable);
-    } else if (category == null || category.isBlank()) {
+    } else if (!hasCategory) {
       page = placeRepository.findAll(pageable);
-    } else if (category.contains(",")) {
-      page = placeRepository.findByCategoryIn(List.of(category.split(",")), pageable);
+    } else if (hasCategory && categories.size() > 1) {
+      page = placeRepository.findByCategoryIn(categories, pageable);
     } else {
       page = placeRepository.findByCategory(category, pageable);
     }
@@ -162,6 +179,7 @@ public class PlaceController {
       @RequestParam double lon,
       @RequestParam(required = false) String category,
       @RequestParam(required = false) String subCategory,
+      @RequestParam(required = false) String region,
       @RequestParam(defaultValue = "30") int limit) {
     int pool = Math.max(limit * 20, 500);
     List<Place> candidates = placeRepository.findNearestPlaces(lat, lon, pool);
@@ -174,6 +192,8 @@ public class PlaceController {
         .filter(place -> categories == null || categories.contains(place.getCategory()))
         .filter(place -> subCategory == null || subCategory.isBlank()
             || (place.getPlaceCategory() != null && subCategory.equals(place.getPlaceCategory().getSubCategory())))
+        .filter(place -> region == null || region.isBlank()
+            || (place.getAddress() != null && place.getAddress().contains(region)))
         .limit(limit)
         .toList();
 
