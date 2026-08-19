@@ -231,10 +231,16 @@ public class PlaceController {
 
   // 큐레이션 탭 카테고리 칩에 개수를 표시하기 위한 공개 API. 카테고리별로 매번 목록을 다 가져와
   // 세는 건 비효율적이라 DB에서 GROUP BY로 바로 집계한다(AdminController의 같은 패턴 재사용).
+  // region이 있으면 그 지역 안에서만 집계한다(2026-08-19) - 없으면 예전처럼 전국 집계.
   @GetMapping("/category-counts")
-  public ResponseEntity<Map<String, Long>> getCategoryCounts() {
+  public ResponseEntity<Map<String, Long>> getCategoryCounts(@RequestParam(required = false) String region) {
+    boolean hasRegion = region != null && !region.isBlank();
+    List<Object[]> rows = hasRegion
+        ? placeRepository.countGroupedByCategoryAndAddressContaining(region)
+        : placeRepository.countGroupedByCategory();
+
     Map<String, Long> counts = new java.util.LinkedHashMap<>();
-    for (Object[] row : placeRepository.countGroupedByCategory()) {
+    for (Object[] row : rows) {
       counts.put((String) row[0], (Long) row[1]);
     }
     return ResponseEntity.ok(counts);
@@ -242,9 +248,15 @@ public class PlaceController {
 
   // 숙박 탭처럼 대분류 하나를 세부분류 칩으로 한 번 더 쪼개서 보여줄 때 쓰는 개수 집계 API.
   @GetMapping("/category-counts/sub")
-  public ResponseEntity<Map<String, Long>> getSubCategoryCounts(@RequestParam String category) {
+  public ResponseEntity<Map<String, Long>> getSubCategoryCounts(
+      @RequestParam String category, @RequestParam(required = false) String region) {
+    boolean hasRegion = region != null && !region.isBlank();
+    List<Object[]> rows = hasRegion
+        ? placeRepository.countGroupedBySubCategoryAndAddressContaining(category, region)
+        : placeRepository.countGroupedBySubCategory(category);
+
     Map<String, Long> counts = new java.util.LinkedHashMap<>();
-    for (Object[] row : placeRepository.countGroupedBySubCategory(category)) {
+    for (Object[] row : rows) {
       counts.put((String) row[0], (Long) row[1]);
     }
     return ResponseEntity.ok(counts);

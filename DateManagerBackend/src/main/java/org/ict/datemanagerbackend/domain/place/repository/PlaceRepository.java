@@ -48,6 +48,13 @@ public interface PlaceRepository extends JpaRepository<Place, Long> {
       + "GROUP BY p.placeCategory.subCategory")
   List<Object[]> countGroupedBySubCategory(String category);
 
+  // 위와 같은 집계인데 지역까지 같이 좁힐 때 쓴다(2026-08-19, category-counts와 같은 이유).
+  @Query("SELECT p.placeCategory.subCategory, COUNT(p) FROM Place p "
+      + "WHERE p.category = :category AND p.placeCategory IS NOT NULL "
+      + "AND p.address LIKE CONCAT('%', :region, '%') "
+      + "GROUP BY p.placeCategory.subCategory")
+  List<Object[]> countGroupedBySubCategoryAndAddressContaining(String category, String region);
+
   // 이름에 특정 키워드가 포함된 장소를 찾는다 - 프랜차이즈/체인점 블랙리스트 정리용
   // (TourApiSyncService.cleanupBlacklistedPlaces() 참고).
   List<Place> findByNameContaining(String keyword);
@@ -60,6 +67,12 @@ public interface PlaceRepository extends JpaRepository<Place, Long> {
   // 하드코딩하지 않고 실제 저장된 값을 그대로 집계한다. 결과의 각 Object[]는 [category, count].
   @Query("SELECT p.category, COUNT(p) FROM Place p GROUP BY p.category ORDER BY COUNT(p) DESC")
   List<Object[]> countGroupedByCategory();
+
+  // 큐레이션 탭 카테고리 칩의 "N곳" 표시가 지역 필터랑 무관하게 항상 전국 건수만 보여주고 있던 문제
+  // 수정용(2026-08-19, 사용자가 실제 화면에서 발견) - region이 있으면 그 지역 안에서만 집계한다.
+  @Query("SELECT p.category, COUNT(p) FROM Place p WHERE p.address LIKE CONCAT('%', :region, '%') "
+      + "GROUP BY p.category ORDER BY COUNT(p) DESC")
+  List<Object[]> countGroupedByCategoryAndAddressContaining(String region);
 
   // 전체 장소 백업(CSV export, AdminController)용 - place_category를 LEFT JOIN 페치해서 한 번의
   // 쿼리로 다 가져온다. 엔티티로 84,000여건을 로드하면서 placeCategory를 건마다 지연 로딩하면
