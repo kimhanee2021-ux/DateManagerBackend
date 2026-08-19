@@ -106,12 +106,16 @@ public class PlaceController {
     Map<Long, PerformanceRanking> rankingByPlaceId = performanceRankingRepository.findByPlace_IdIn(placeIds).stream()
         .collect(Collectors.toMap(r -> r.getPlace().getId(), r -> r));
 
+    Map<Long, PlaceStyle> styleByPlaceId = placeStyleRepository.findByPlace_IdIn(placeIds).stream()
+        .collect(Collectors.toMap(s -> s.getPlace().getId(), s -> s));
+
     return ResponseEntity.ok(page.map(place -> {
       PlaceCategory placeCategory = place.getPlaceCategory();
       PlaceReality reality = realityByPlaceId.get(place.getId());
       List<String> amenities = amenitiesByPlaceId.getOrDefault(place.getId(), List.of());
       PerformanceRanking ranking = rankingByPlaceId.get(place.getId());
-      return CurationPlaceDto.from(place, placeCategory, reality, amenities, ranking);
+      PlaceStyle style = styleByPlaceId.get(place.getId());
+      return CurationPlaceDto.from(place, placeCategory, reality, amenities, ranking, style);
     }));
   }
 
@@ -209,13 +213,17 @@ public class PlaceController {
     Map<Long, PerformanceRanking> rankingByPlaceId = performanceRankingRepository.findByPlace_IdIn(placeIds).stream()
         .collect(Collectors.toMap(r -> r.getPlace().getId(), r -> r));
 
+    Map<Long, PlaceStyle> styleByPlaceId = placeStyleRepository.findByPlace_IdIn(placeIds).stream()
+        .collect(Collectors.toMap(s -> s.getPlace().getId(), s -> s));
+
     List<CurationPlaceDto> result = filtered.stream()
         .map(place -> CurationPlaceDto.from(
             place,
             place.getPlaceCategory(),
             realityByPlaceId.get(place.getId()),
             amenitiesByPlaceId.getOrDefault(place.getId(), List.of()),
-            rankingByPlaceId.get(place.getId())
+            rankingByPlaceId.get(place.getId()),
+            styleByPlaceId.get(place.getId())
         ))
         .toList();
     return ResponseEntity.ok(result);
