@@ -1,4 +1,4 @@
-package org.ict.datemanagerbackend.domain.place.config;
+package org.ict.datemanagerbackend.domain.place.init;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -63,6 +63,11 @@ public class PlaceCategorySeeder implements ApplicationRunner {
       Seed.neutral("맛집", "식당(기타)", "🍴"),
       Seed.neutral("맛집", "카페(브런치)", "🥐"),
       Seed.neutral("맛집", "카페(일반)", "☕"),
+
+      // 공연 - KOPIS 박스오피스 장르(cate) 중 기존 9개 세부분류 어디에도 안 맞는 것들(2026-08-19).
+      // 점수는 아직 확정 안 해서 중립(50) - 나중에 채워 넣을 것.
+      Seed.neutral("공연", "서커스/마술", "🎩"),
+      Seed.neutral("공연", "복합공연", "🎟️"),
 
       // 공연 (2026-08-14 점수 확정 - 콘서트/대중음악은 소극장형/대형으로 성향이 완전 갈려서 둘로 분리)
       new Seed("공연", "클래식/오페라", "🎻", 50, 65, 85, 50, 50),

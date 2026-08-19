@@ -29,7 +29,8 @@ public record CurationPlaceDto(
     String bookingUrl,
     String runtimeText,
     Integer matchScore,
-    Integer boxOfficeRank
+    Integer boxOfficeRank,
+    String genreName
 ) {
 
   public static CurationPlaceDto from(
@@ -55,7 +56,8 @@ public record CurationPlaceDto(
         place.getBookingUrl(),
         place.getRuntimeText(),
         null,
-        ranking != null ? ranking.getRankNo() : null
+        ranking != null ? ranking.getRankNo() : null,
+        ranking != null ? ranking.getGenreName() : null
     );
   }
 }

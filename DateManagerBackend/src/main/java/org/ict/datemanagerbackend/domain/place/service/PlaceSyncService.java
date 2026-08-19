@@ -10,6 +10,7 @@ import org.ict.datemanagerbackend.domain.place.entity.PerformanceRanking;
 import org.ict.datemanagerbackend.domain.place.entity.Place;
 import org.ict.datemanagerbackend.domain.place.repository.PerformanceRankingRepository;
 import org.ict.datemanagerbackend.domain.place.repository.PlaceRepository;
+import org.ict.datemanagerbackend.domain.place.repository.PlaceStyleRepository;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
@@ -61,11 +62,39 @@ public class PlaceSyncService {
   // catecode/area는 선택). ststype=day면 stdate=eddate를 같은 날짜로 줘서 "그날의 순위"를 받는다.
   private static final String KOPIS_BOXOFFICE_URL = "http://www.kopis.or.kr/openApi/restful/boxoffice";
 
+  // 박스오피스용 장르 코드(catecode) - KOPIS 공식 오픈API 코드표(kopis_openapi_code_v3.1.docx)에서
+  // 확인함. catecode 없이 호출하면 "전체 통합 순위"만 나와서 순위권 밖 장르(국악/아동 등)가 아예 안
+  // 잡히므로, 장르별로 따로 호출해서 각 장르 안에서의 순위(rnum)를 얻는다(2026-08-19). 코드표에
+  // "CCCA|CCCB"처럼 같은 장르 설명에 코드 2개가 같이 적힌 경우가 있어(클래식/오페라, 무용, 국악/복합)
+  // 둘 다 따로 호출한다 - 어느 쪽이 실제로 쓰이는 코드인지 문서만으로는 확정할 수 없어서 안전하게 둘 다
+  // 조회. 참고: 이 코드표엔 "대중음악(콘서트)" 항목이 아예 없음 - KOPIS 박스오피스가 다루는 예매율은
+  // 연극/뮤지컬/클래식·오페라/무용/국악·복합/아동/오픈런 7개 그룹뿐이라, 콘서트는 박스오피스 순위
+  // 자체를 제공하지 않는다(우리가 빠뜨린 게 아니라 API 자체의 한계).
+  private static final List<String> BOXOFFICE_GENRE_CODES = List.of(
+      "AAAA", // 연극
+      "AAAB", // 뮤지컬
+      "CCCA", "CCCB", // 클래식/오페라
+      "BBBA", "BBBB", // 무용
+      "CCCC", "EEEA", // 국악/복합
+      "KID",  // 아동
+      "OPEN"  // 오픈런
+  );
+
   // 우리 DB에서 "이 데이터가 KOPIS에서 왔다"는 걸 표시하기 위한 값 (Place.externalSource에 저장됨)
   private static final String EXTERNAL_SOURCE = "KOPIS";
 
+  // 커플 데이트 앱 취지와 안 맞는 어린이/키즈 대상 공연은 제외한다 - PlaceCategorySeeder에서
+  // "어린이체험관"을 뺀 것과 같은 이유(2026-08-19). 실측 결과 뮤지컬 카테고리에 "어린이 캣",
+  // "MBC 심야괴담회X니니키즈: 학교에서 살아남기" 같은 아동용 공연이 6건 섞여 있었음.
+  private static final List<String> KIDS_CONTENT_KEYWORDS = List.of("어린이", "키즈", "유아", "아동극");
+
+  private boolean isKidsContent(String title) {
+    return title != null && KIDS_CONTENT_KEYWORDS.stream().anyMatch(title::contains);
+  }
+
   private final PlaceRepository placeRepository;
   private final PerformanceRankingRepository performanceRankingRepository;
+  private final PlaceStyleRepository placeStyleRepository;
 
   // 외부 API를 HTTP로 호출할 때 쓰는 스프링 기본 도구. new로 직접 생성해도 됨 (설정이 단순한 경우)
   private final RestTemplate restTemplate = new RestTemplate();
@@ -120,34 +149,44 @@ public class PlaceSyncService {
   public void syncBoxOffice() {
     // 박스오피스는 당일 데이터가 아직 집계 중일 수 있어(실측 확인) 전날(어제) 기준으로 조회한다.
     LocalDate yesterday = LocalDate.now().minusDays(1);
-    List<KopisBoxOfficeDto> ranking = fetchBoxOffice(yesterday);
 
     performanceRankingRepository.deleteAllInBatch();
 
+    int totalFetched = 0;
     int linked = 0;
-    for (KopisBoxOfficeDto item : ranking) {
-      Optional<Place> place = placeRepository.findByExternalSourceAndExternalId(EXTERNAL_SOURCE, item.mt20id());
-      if (place.isEmpty()) {
-        continue;
+    // 장르 코드(BOXOFFICE_GENRE_CODES)마다 따로 호출한다 - 그러면 rnum이 "전체 순위"가 아니라
+    // "그 장르 안에서의 순위"로 내려오므로, 장르별로 나눠서 보여주는 게 목적일 때 이렇게 해야 한다.
+    for (String catecode : BOXOFFICE_GENRE_CODES) {
+      List<KopisBoxOfficeDto> ranking = fetchBoxOffice(yesterday, catecode);
+      totalFetched += ranking.size();
+
+      for (KopisBoxOfficeDto item : ranking) {
+        Optional<Place> place = placeRepository.findByExternalSourceAndExternalId(EXTERNAL_SOURCE, item.mt20id());
+        if (place.isEmpty()) {
+          continue;
+        }
+        Integer rankNo = parseIntSafe(item.rnum());
+        if (rankNo == null) {
+          continue;
+        }
+        performanceRankingRepository.save(PerformanceRanking.builder()
+            .place(place.get())
+            .rankNo(rankNo)
+            .genreName(item.cate())
+            .area(item.area())
+            .build());
+        linked++;
       }
-      Integer rankNo = parseIntSafe(item.rnum());
-      if (rankNo == null) {
-        continue;
-      }
-      performanceRankingRepository.save(PerformanceRanking.builder()
-          .place(place.get())
-          .rankNo(rankNo)
-          .genreName(item.cate())
-          .area(item.area())
-          .build());
-      linked++;
+
+      sleepBriefly();
     }
 
-    log.info("KOPIS 박스오피스 순위 동기화 완료 - 전체 {}건 중 Place 매칭 {}건", ranking.size(), linked);
+    log.info("KOPIS 박스오피스 순위 동기화 완료 - 장르 {}개 조회, 전체 {}건 중 Place 매칭 {}건",
+        BOXOFFICE_GENRE_CODES.size(), totalFetched, linked);
   }
 
-  /** KOPIS 박스오피스 API를 호출해서 지정한 날짜의 예매율 순위를 받아옴 (장르/지역 필터 없이 전체 순위) */
-  private List<KopisBoxOfficeDto> fetchBoxOffice(LocalDate date) {
+  /** KOPIS 박스오피스 API를 호출해서 지정한 날짜·장르(catecode)의 예매율 순위를 받아옴 */
+  private List<KopisBoxOfficeDto> fetchBoxOffice(LocalDate date, String catecode) {
     String d = date.format(DateTimeFormatter.BASIC_ISO_DATE);
     String encodedServiceKey = java.net.URLEncoder.encode(serviceKey, java.nio.charset.StandardCharsets.UTF_8);
     String url = UriComponentsBuilder.fromUriString(KOPIS_BOXOFFICE_URL)
@@ -155,6 +194,7 @@ public class PlaceSyncService {
         .queryParam("ststype", "day")
         .queryParam("stdate", d)
         .queryParam("eddate", d)
+        .queryParam("catecode", catecode)
         .build(true)
         .toUriString();
 
@@ -207,6 +247,18 @@ public class PlaceSyncService {
       // 이미 저장된 공연인지, external_source + external_id 조합으로 확인 (KOPIS의 mt20id가 고유 식별자)
       Optional<Place> existing =
           placeRepository.findByExternalSourceAndExternalId(EXTERNAL_SOURCE, p.mt20id());
+
+      if (isKidsContent(p.prfnm())) {
+        // 이 필터가 생기기 전에 이미 저장돼 있던 것도 이번 동기화 때 같이 정리한다. place_styles(1:1)와
+        // performance_rankings(N:1)가 FK로 places를 참조하고 있어서, 자식부터 지워야 places 삭제 시
+        // ORA-02292(무결성 제약조건 위배)가 안 난다(TourApiSyncService.cleanupBlacklistedPlaces와 동일 이유).
+        existing.ifPresent(place -> {
+          performanceRankingRepository.findByPlace_IdIn(List.of(place.getId())).forEach(performanceRankingRepository::delete);
+          placeStyleRepository.findByPlace_Id(place.getId()).ifPresent(placeStyleRepository::delete);
+          placeRepository.delete(place);
+        });
+        continue;
+      }
 
       // 상세조회 하나로 공연시설 ID(mt10id)뿐 아니라 공연시간/가격/예매링크까지 같이 얻는다
       // (추가 API 호출 없이 기존에 어차피 부르던 상세조회 응답을 더 활용, 2026-08-13).
@@ -471,6 +523,16 @@ public class PlaceSyncService {
       return LocalDate.parse(value.trim(), KOPIS_DATE_FORMAT);
     } catch (Exception e) {
       return null;
+    }
+  }
+
+  // 박스오피스를 장르별로 나눠 여러 번 호출할 때 KOPIS 서버에 과도하게 연속 요청하지 않도록 잠깐 쉼
+  // (KakaoPlaceSyncService와 동일한 패턴).
+  private void sleepBriefly() {
+    try {
+      Thread.sleep(150);
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
     }
   }
 }

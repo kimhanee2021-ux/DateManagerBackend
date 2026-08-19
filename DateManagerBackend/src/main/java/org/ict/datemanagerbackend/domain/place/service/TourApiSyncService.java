@@ -52,12 +52,40 @@ public class TourApiSyncService {
   // 중복 노출되던 문제, 2026-08-14).
   // "약국"은 TourAPI가 쇼핑(38) 카테고리로 잘못 분류해서 들어오는 경우(2026-08-18 확인, 227건)
   // - 데이트 장소가 아니라서 프랜차이즈 편의점/올리브영과 같은 이유로 제외한다.
+  // 2026-08-19 추가분: 쇼핑 카테고리 실측 결과 나이키/유니클로 같은 패션 프랜차이즈, 롯데하이마트
+  // 같은 가전 체인, 이마트/롯데마트/홈플러스 같은 대형마트도 전국에 반복 등장해서 같은 기준으로 추가.
+  // 대형마트를 뺀 이유: "OO동 이마트" 자체가 데이트 코스가 되기보다 장보기 목적이 커서 위 편의점류와
+  // 성격이 같다고 판단(백화점처럼 그 장소 자체가 나들이 목적지는 아님).
   private static final List<String> BLACKLISTED_NAME_KEYWORDS = List.of(
-      "올리브영", "다이소", "이마트24", "GS25", "CU", "세븐일레븐", "미니스톱", "약국"
+      "올리브영", "다이소", "이마트24", "GS25", "CU", "세븐일레븐", "미니스톱", "약국",
+      "롯데하이마트", "아트박스", "정관장", "LG전자 베스트샵", "이마트", "노브랜드", "롯데마트",
+      "홈플러스", "유니클로", "다비치안경", "오렌즈", "나이키", "노스페이스", "이니스프리",
+      "으뜸50안경", "뉴발란스", "코오롱스포츠", "에잇세컨즈", "스파오", "ABC마트"
   );
 
   private boolean isBlacklisted(String name) {
     return name != null && BLACKLISTED_NAME_KEYWORDS.stream().anyMatch(name::contains);
+  }
+
+  // 백화점/아울렛 안에 입점한 개별 브랜드 매장(예: "로에베 현대백화점 압구정본점",
+  // "스케쳐스 롯데아울렛 동부산점")이 TourAPI 쇼핑(38) 카테고리에 통째로 섞여 들어온다 - 실측 결과
+  // 고유 백화점 지점 65곳에 딸린 브랜드 매장이 1,791건, 아울렛 쪽도 같은 패턴으로 다수 확인됨
+  // (2026-08-19). 데이트 코스로는 "그 백화점/아울렛" 자체 하나면 충분하므로, 이름이 "백화점" 또는
+  // "아울렛"을 포함해도 아래 접두어로 시작하지 않으면(=쇼핑몰 자체가 아니라 그 안의 특정 브랜드
+  // 매장이면) 건너뛴다.
+  private static final List<String> MALL_PREFIXES = List.of(
+      // 백화점
+      "현대백화점", "롯데백화점", "신세계백화점", "갤러리아", "AK플라자", "대구백화점", "동아백화점",
+      // 아울렛
+      "롯데아울렛", "롯데프리미엄아울렛", "모다아울렛", "신세계사이먼프리미엄아울렛",
+      "현대프리미엄아울렛", "뉴코아아울렛", "뉴코아팩토리아울렛", "2001아울렛"
+  );
+
+  private boolean isBrandInsideMall(String name) {
+    if (name == null || !(name.contains("백화점") || name.contains("아울렛"))) {
+      return false;
+    }
+    return MALL_PREFIXES.stream().noneMatch(name::startsWith);
   }
 
   private final PlaceRepository placeRepository;
@@ -83,7 +111,7 @@ public class TourApiSyncService {
       List<TourApiPlaceDto> places = fetchPlaces(contentTypeId);
 
       for (TourApiPlaceDto p : places) {
-        if (isBlacklisted(p.title())) {
+        if (isBlacklisted(p.title()) || isBrandInsideMall(p.title())) {
           continue;
         }
 
@@ -164,6 +192,24 @@ public class TourApiSyncService {
         }
       }
     }
+
+    // 백화점 내 개별 브랜드 매장(2026-08-19 추가된 규칙)도 같은 방식으로 정리 - 키워드 하나로는
+    // 못 걸러서(예: "백화점"만 블랙리스트하면 백화점 자체까지 다 지워짐) 카테고리가 "쇼핑"인
+    // 것만 전부 훑어서 isBrandInsideMall로 판단한다.
+    for (Place place : placeRepository.findByCategory("쇼핑", org.springframework.data.domain.Pageable.unpaged())) {
+      if (!isBrandInsideMall(place.getName())) {
+        continue;
+      }
+      try {
+        placeStyleRepository.findByPlace_Id(place.getId()).ifPresent(placeStyleRepository::delete);
+        placeRepository.delete(place);
+        placeRepository.flush();
+        deleted++;
+      } catch (DataIntegrityViolationException e) {
+        skipped++;
+      }
+    }
+
     log.info("블랙리스트 장소 정리 완료 - {}건 삭제, {}건 연관 데이터로 건너뜀", deleted, skipped);
     return Map.of("deleted", deleted, "skipped", skipped);
   }

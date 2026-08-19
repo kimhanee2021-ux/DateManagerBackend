@@ -1,4 +1,4 @@
-package org.ict.datemanagerbackend.domain.place.config;
+package org.ict.datemanagerbackend.domain.place.init;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -104,26 +104,66 @@ public class PlaceCategoryLinker implements ApplicationRunner {
       ))
   );
 
+  // KOPIS 공연 데이터는 Place.category 자체가 "공연"이라는 대분류가 아니라 KOPIS가 준 장르명
+  // 그대로 저장돼 있어서(예: "뮤지컬", "연극"), 위 KEYWORDS.get("공연")로는 parent 자체가
+  // 안 걸려서 지금까지 단 한 건도 연결되지 못하고 있었다(2026-08-19 발견 - 56,482건 중 0건 연결
+  // 로그로 확인함). 장르명이 이미 KOPIS의 정확한 분류라서, 제목 키워드 추측 대신 장르값을 우리
+  // 세부분류로 직접 매핑한다. 클래식/뮤지컬/국악/무용처럼 1:1로 대응되는 건 그대로 쓰고, 연극과
+  // 대중음악처럼 세부분류가 여러 개로 갈리는 경우만 제목 키워드로 한 번 더 좁힌다.
+  private static final java.util.Set<String> PERFORMANCE_GENRES = java.util.Set.of(
+      "서양음악(클래식)", "뮤지컬", "한국음악(국악)", "무용(서양/한국무용)", "대중무용",
+      "연극", "대중음악", "서커스/마술", "복합"
+  );
+
+  private String resolvePerformanceSubCategory(String genre, String placeName) {
+    String name = placeName == null ? "" : placeName;
+    return switch (genre) {
+      case "서양음악(클래식)" -> "클래식/오페라";
+      case "뮤지컬" -> "뮤지컬";
+      case "한국음악(국악)" -> "국악/전통공연";
+      case "무용(서양/한국무용)", "대중무용" -> "무용/발레";
+      case "서커스/마술" -> "서커스/마술";
+      case "복합" -> "복합공연";
+      case "연극" -> name.contains("이머시브") ? "이머시브 연극" : "관람형 연극";
+      case "대중음악" -> {
+        if (name.contains("페스티벌") || name.contains("페스타")) yield "뮤직페스티벌";
+        if (name.contains("어쿠스틱") || name.contains("버스킹") || name.contains("소극장")) {
+          yield "소극장/어쿠스틱 콘서트(발라드류)";
+        }
+        yield "대형 콘서트(아이돌/스타디움)";
+      }
+      default -> null;
+    };
+  }
+
   @Override
   public void run(ApplicationArguments args) {
     List<Place> targets = placeRepository.findByPlaceCategoryIsNull();
     int linked = 0;
 
     for (Place place : targets) {
-      String parent = PARENT_ALIASES.getOrDefault(place.getCategory(), place.getCategory());
-      Map<String, List<String>> subKeywords = KEYWORDS.get(parent);
-      if (subKeywords == null || place.getName() == null) {
-        continue;
-      }
+      String rawCategory = place.getCategory();
+      String parent;
+      String matchedSub;
 
-      String matchedSub = null;
-      for (Map.Entry<String, List<String>> entry : subKeywords.entrySet()) {
-        boolean hit = entry.getValue().stream().anyMatch(place.getName()::contains);
-        if (hit) {
-          matchedSub = entry.getKey();
-          break;
+      if (PERFORMANCE_GENRES.contains(rawCategory)) {
+        parent = "공연";
+        matchedSub = resolvePerformanceSubCategory(rawCategory, place.getName());
+      } else {
+        parent = PARENT_ALIASES.getOrDefault(rawCategory, rawCategory);
+        Map<String, List<String>> subKeywords = KEYWORDS.get(parent);
+        matchedSub = null;
+        if (subKeywords != null && place.getName() != null) {
+          for (Map.Entry<String, List<String>> entry : subKeywords.entrySet()) {
+            boolean hit = entry.getValue().stream().anyMatch(place.getName()::contains);
+            if (hit) {
+              matchedSub = entry.getKey();
+              break;
+            }
+          }
         }
       }
+
       if (matchedSub == null) {
         continue;
       }

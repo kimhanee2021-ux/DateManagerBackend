@@ -143,9 +143,11 @@ public class PlaceController {
     List<Long> placeIds = places.stream().map(Place::getId).toList();
     Map<Long, PlaceStyle> styleByPlaceId = placeStyleRepository.findByPlace_IdIn(placeIds).stream()
         .collect(Collectors.toMap(s -> s.getPlace().getId(), s -> s));
+    Map<Long, PerformanceRanking> rankingByPlaceId = performanceRankingRepository.findByPlace_IdIn(placeIds).stream()
+        .collect(Collectors.toMap(r -> r.getPlace().getId(), r -> r));
 
     List<PlaceResponseDto> result = places.stream()
-        .map(place -> PlaceResponseDto.from(place, styleByPlaceId.get(place.getId())))
+        .map(place -> PlaceResponseDto.from(place, styleByPlaceId.get(place.getId()), rankingByPlaceId.get(place.getId())))
         .toList();
     return ResponseEntity.ok(result);
   }
