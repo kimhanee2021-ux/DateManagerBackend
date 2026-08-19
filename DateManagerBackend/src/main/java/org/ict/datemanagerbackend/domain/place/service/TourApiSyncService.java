@@ -67,6 +67,17 @@ public class TourApiSyncService {
     return name != null && BLACKLISTED_NAME_KEYWORDS.stream().anyMatch(name::contains);
   }
 
+  // TourAPI가 쇼핑(38)에 성형외과/피부과/치과 등 병의원을 잘못 섞어서 준다(실측 106건, "디아이성형외과의원"
+  // "닥터스피부과의원" 등 전부 진짜 병원 - 2026-08-19). 데이트 앱 취지와 정반대라 제외해야 하는데, 전체
+  // BLACKLISTED_NAME_KEYWORDS에 넣지 않고 쇼핑 카테고리에서만 걸러낸다 - "의원"/"병원"은 "안의원조갈비집"
+  // (맛집), "부산 구 백제병원"(관광지, 근대문화유산), "OO커피 XX병원점"(카페가 병원 근처에 있을 뿐)처럼
+  // 다른 카테고리에서는 진짜 데이트 장소 이름에 우연히 포함되는 경우가 있어서 전역으로 걸면 오탐이 난다.
+  private static final List<String> MEDICAL_KEYWORDS = List.of("의원", "병원");
+
+  private boolean isMedicalFacility(String name) {
+    return name != null && MEDICAL_KEYWORDS.stream().anyMatch(name::contains);
+  }
+
   // 백화점/아울렛 안에 입점한 개별 브랜드 매장(예: "로에베 현대백화점 압구정본점",
   // "스케쳐스 롯데아울렛 동부산점")이 TourAPI 쇼핑(38) 카테고리에 통째로 섞여 들어온다 - 실측 결과
   // 고유 백화점 지점 65곳에 딸린 브랜드 매장이 1,791건, 아울렛 쪽도 같은 패턴으로 다수 확인됨
@@ -86,6 +97,34 @@ public class TourApiSyncService {
       return false;
     }
     return MALL_PREFIXES.stream().noneMatch(name::startsWith);
+  }
+
+  // 쇼핑(38) 카테고리는 위 두 필터로도 다 못 잡을 만큼 프랜차이즈 브랜드 종류가 많다(실측 결과
+  // "브랜드명 + 지점명" 패턴으로 전국 5곳 이상 반복되는 브랜드가 128개, 1,277건 - 2026-08-19).
+  // 브랜드를 일일이 나열하는 대신, 이름 첫 단어(대체로 브랜드명, 예: "로이드 안동점" -> "로이드")를
+  // 기준으로 전국 등장 횟수를 세어 이 기준 이상이면 프랜차이즈로 보고 통째로 제외한다. 실측으로 확인한
+  // 임계값(사용자 지정, 2026-08-19): 5회 이상.
+  private static final int SHOPPING_FRANCHISE_THRESHOLD = 5;
+
+  private String brandKey(String name) {
+    if (name == null || name.isBlank()) return "";
+    return name.trim().split("\\s+")[0];
+  }
+
+  /**
+   * 쇼핑 목록 전체에서 이름 첫 단어 기준 SHOPPING_FRANCHISE_THRESHOLD회 이상 반복되는 브랜드 키 집합을
+   * 만든다. "백화점"/"아울렛"이 들어간 이름은 제외한다 - 그건 isBrandInsideMall이 이미 따로 판단하는
+   * 영역이라, 여기서 또 세면 "현대백화점"처럼 정상적으로 남겨야 할 이름까지 프랜차이즈로 오판해서
+   * 지워버릴 수 있다(예: 현대백화점 지점만 59개라 5회 기준을 그냥 넘어감).
+   */
+  private java.util.Set<String> detectFranchiseBrandKeys(List<TourApiPlaceDto> shoppingPlaces) {
+    Map<String, Long> counts = shoppingPlaces.stream()
+        .filter(p -> p.title() != null && !p.title().contains("백화점") && !p.title().contains("아울렛"))
+        .collect(java.util.stream.Collectors.groupingBy(p -> brandKey(p.title()), java.util.stream.Collectors.counting()));
+    return counts.entrySet().stream()
+        .filter(e -> e.getValue() >= SHOPPING_FRANCHISE_THRESHOLD)
+        .map(Map.Entry::getKey)
+        .collect(java.util.stream.Collectors.toSet());
   }
 
   private final PlaceRepository placeRepository;
@@ -110,8 +149,17 @@ public class TourApiSyncService {
       String category = entry.getValue();
       List<TourApiPlaceDto> places = fetchPlaces(contentTypeId);
 
+      // 쇼핑만 프랜차이즈 브랜드 종류가 지나치게 많아서(실측 128개 이상) 정적 키워드로는 못 잡는다 -
+      // "쇼핑"일 때만 이번 목록 전체를 먼저 훑어 반복 브랜드를 찾아둔다(2026-08-19).
+      java.util.Set<String> franchiseBrandKeys = "쇼핑".equals(category)
+          ? detectFranchiseBrandKeys(places)
+          : java.util.Set.of();
+
+      boolean isShoppingCategory = "쇼핑".equals(category);
+
       for (TourApiPlaceDto p : places) {
-        if (isBlacklisted(p.title()) || isBrandInsideMall(p.title())) {
+        if (isBlacklisted(p.title()) || isBrandInsideMall(p.title()) || franchiseBrandKeys.contains(brandKey(p.title()))
+            || (isShoppingCategory && isMedicalFacility(p.title()))) {
           continue;
         }
 
@@ -207,6 +255,96 @@ public class TourApiSyncService {
         deleted++;
       } catch (DataIntegrityViolationException e) {
         skipped++;
+      }
+    }
+
+    // 쇼핑에 잘못 섞여 들어온 병의원 정리(2026-08-19) - isMedicalFacility 참고.
+    for (Place place : placeRepository.findByCategory("쇼핑", org.springframework.data.domain.Pageable.unpaged())) {
+      if (!isMedicalFacility(place.getName())) {
+        continue;
+      }
+      try {
+        placeStyleRepository.findByPlace_Id(place.getId()).ifPresent(placeStyleRepository::delete);
+        placeRepository.delete(place);
+        placeRepository.flush();
+        deleted++;
+      } catch (DataIntegrityViolationException e) {
+        skipped++;
+      }
+    }
+
+    // 이름 반복 기반 프랜차이즈 정리(2026-08-19) - DB에 이미 쌓인 쇼핑 데이터를 대상으로, syncPlaces와
+    // 같은 기준(첫 단어 5회 이상 반복, 백화점/아울렛 제외)으로 브랜드를 찾아서 지운다.
+    List<Place> shoppingPlaces = placeRepository.findByCategory("쇼핑", org.springframework.data.domain.Pageable.unpaged())
+        .getContent();
+    Map<String, Long> brandCounts = shoppingPlaces.stream()
+        .filter(place -> place.getName() != null && !place.getName().contains("백화점") && !place.getName().contains("아울렛"))
+        .collect(java.util.stream.Collectors.groupingBy(place -> brandKey(place.getName()), java.util.stream.Collectors.counting()));
+    java.util.Set<String> franchiseBrandKeys = brandCounts.entrySet().stream()
+        .filter(e -> e.getValue() >= SHOPPING_FRANCHISE_THRESHOLD)
+        .map(Map.Entry::getKey)
+        .collect(java.util.stream.Collectors.toSet());
+
+    for (Place place : shoppingPlaces) {
+      if (!franchiseBrandKeys.contains(brandKey(place.getName()))) {
+        continue;
+      }
+      try {
+        placeStyleRepository.findByPlace_Id(place.getId()).ifPresent(placeStyleRepository::delete);
+        placeRepository.delete(place);
+        placeRepository.flush();
+        deleted++;
+      } catch (DataIntegrityViolationException e) {
+        skipped++;
+      }
+    }
+
+    // 전통시장 정리(2026-08-19, 사용자 요청 - 백화점과 같은 문제) - "전통시장"으로 분류된 곳 중
+    // ①이름 첫 단어에 "시장"이 없으면(예: "로우로우 광장시장점") 시장 자체가 아니라 그 안의 브랜드
+    // 매장이라 제외하고, ②같은 시장의 하위 구역/상가(예: "광장시장 한복매장")는 순수 시장 이름
+    // ("광장시장") 항목이 이미 있으면 그쪽만 남기고 나머지는 제외한다. "역전시장(순천)"처럼 지역이
+    // 이름에 괄호로 붙어있는 경우는 첫 단어 자체가 달라져서(공백 없이 붙음) 서로 다른 시장으로
+    // 안전하게 구분된다 - 진짜 다른 지역 시장을 잘못 합치는 걸 막아준다.
+    List<Place> marketPlaces = placeRepository.findByCategory("쇼핑", org.springframework.data.domain.Pageable.unpaged())
+        .getContent().stream()
+        .filter(place -> place.getPlaceCategory() != null && "전통시장".equals(place.getPlaceCategory().getSubCategory()))
+        .toList();
+
+    List<Place> brandAtMarket = marketPlaces.stream()
+        .filter(place -> place.getName() != null && !brandKey(place.getName()).contains("시장"))
+        .toList();
+    for (Place place : brandAtMarket) {
+      try {
+        placeStyleRepository.findByPlace_Id(place.getId()).ifPresent(placeStyleRepository::delete);
+        placeRepository.delete(place);
+        placeRepository.flush();
+        deleted++;
+      } catch (DataIntegrityViolationException e) {
+        skipped++;
+      }
+    }
+
+    Map<String, List<Place>> byMarketKey = marketPlaces.stream()
+        .filter(place -> !brandAtMarket.contains(place))
+        .collect(java.util.stream.Collectors.groupingBy(place -> brandKey(place.getName())));
+    for (Map.Entry<String, List<Place>> group : byMarketKey.entrySet()) {
+      String marketKey = group.getKey();
+      boolean hasBareEntry = group.getValue().stream().anyMatch(place -> marketKey.equals(place.getName()));
+      if (!hasBareEntry) {
+        continue; // 순수 시장 이름 항목이 없으면 뭘 대표로 남길지 판단할 근거가 없어서 그대로 둔다.
+      }
+      for (Place place : group.getValue()) {
+        if (marketKey.equals(place.getName()) || !place.getName().startsWith(marketKey + " ")) {
+          continue; // 대표 항목이거나, 같은 첫 단어를 우연히 공유할 뿐 하위 구역이 아닌 경우는 건드리지 않음
+        }
+        try {
+          placeStyleRepository.findByPlace_Id(place.getId()).ifPresent(placeStyleRepository::delete);
+          placeRepository.delete(place);
+          placeRepository.flush();
+          deleted++;
+        } catch (DataIntegrityViolationException e) {
+          skipped++;
+        }
       }
     }
 

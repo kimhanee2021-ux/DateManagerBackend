@@ -34,6 +34,19 @@ public class PlaceCategoryLinker implements ApplicationRunner {
       "박물관/미술관", "박물관·미술관"
   );
 
+  // "야시장"이 "시장"을 포함해서 겹치는 문제(아래 KEYWORDS 주석 참고)를 피하려고, 이 카테고리만
+  // 순서가 보장되는 LinkedHashMap으로 직접 채운다.
+  private static Map<String, List<String>> buildOrderedShoppingKeywords() {
+    Map<String, List<String>> m = new java.util.LinkedHashMap<>();
+    m.put("야시장", List.of("야시장"));
+    m.put("전통시장", List.of("시장"));
+    m.put("편집숍/빈티지샵", List.of("편집숍", "빈티지"));
+    m.put("백화점", List.of("백화점"));
+    m.put("아울렛", List.of("아울렛"));
+    m.put("플리마켓/팝업", List.of("플리마켓", "팝업스토어"));
+    return m;
+  }
+
   // parentCategory -> (subCategory -> 이름에 포함되어 있으면 그 세부분류로 판단할 키워드 목록).
   // 세부분류 이름 자체가 이미 좋은 키워드인 경우가 많아서 최대한 재사용했고, "산"/"거리"처럼 너무 짧고
   // 흔한 단어는 오탐이 심해서 일부러 뺐다 - 그런 경우는 그냥 매칭 안 되고 null(중립)로 남는다.
@@ -89,14 +102,12 @@ public class PlaceCategoryLinker implements ApplicationRunner {
           "캠핑/글램핑", List.of("캠핑", "글램핑"),
           "원데이클래스", List.of("원데이클래스", "쿠킹클래스")
       )),
-      Map.entry("쇼핑", Map.of(
-          "전통시장", List.of("전통시장"),
-          "야시장", List.of("야시장"),
-          "편집숍/빈티지샵", List.of("편집숍", "빈티지"),
-          "백화점", List.of("백화점"),
-          "아울렛", List.of("아울렛"),
-          "플리마켓/팝업", List.of("플리마켓", "팝업스토어")
-      )),
+      // 쇼핑만 LinkedHashMap으로 순서를 명시적으로 고정한다 - "전통시장" 키워드를 "시장"으로 넓히면서
+      // (2026-08-19, 노량진수산물도매시장/뚝도청춘시장처럼 "전통시장"이라는 정확한 단어가 없는 진짜
+      // 시장도 잡히게 하기 위함) "야시장"도 "시장"을 포함하게 돼서 두 키워드가 겹친다. Map.of()는
+      // 순서를 보장 안 해서 어느 게 먼저 걸릴지 실행마다 달라질 수 있으므로, put()으로 순서를 직접
+      // 정해서 "야시장"을 먼저 검사해야 "OO야시장"이 우연히 "전통시장"으로 잘못 분류되는 걸 막을 수 있다.
+      Map.entry("쇼핑", buildOrderedShoppingKeywords()),
       Map.entry("축제", Map.of(
           "불꽃/야간축제", List.of("불꽃축제", "불꽃"),
           "음식축제", List.of("음식축제", "푸드페스티벌"),
