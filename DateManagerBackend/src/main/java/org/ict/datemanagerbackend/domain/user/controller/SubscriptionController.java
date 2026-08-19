@@ -1,6 +1,8 @@
 package org.ict.datemanagerbackend.domain.user.controller;
 
 import tools.jackson.databind.JsonNode;
+import org.ict.datemanagerbackend.domain.user.dto.IssueBillingKeyRequest;
+import org.ict.datemanagerbackend.domain.user.dto.SubscriptionDto;
 import org.ict.datemanagerbackend.domain.user.entity.Subscription;
 import org.ict.datemanagerbackend.domain.user.entity.User;
 import org.ict.datemanagerbackend.domain.user.repository.SubscriptionRepository;
@@ -16,7 +18,6 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.client.HttpStatusCodeException;
 
-import java.time.LocalDateTime;
 import java.util.Map;
 import java.util.Optional;
 
@@ -44,14 +45,6 @@ public class SubscriptionController {
         this.subscriptionService = subscriptionService;
     }
 
-    public record IssueBillingKeyRequest(String authKey, String customerKey, String planCode) {
-    }
-
-    public record SubscriptionDto(Long id, String planCode, String status, LocalDateTime startedAt,
-                                   LocalDateTime expiresAt, String paymentProvider, boolean hasBillingKey,
-                                   String lastPaymentStatus, String lastPaymentError) {
-    }
-
     @GetMapping("/me")
     public ResponseEntity<?> getMySubscription(Authentication authentication) {
         Long userId = (Long) authentication.getPrincipal();
@@ -59,7 +52,7 @@ public class SubscriptionController {
         if (sub.isEmpty()) {
             return ResponseEntity.ok(Map.of("hasSubscription", false));
         }
-        return ResponseEntity.ok(toDto(sub.get()));
+        return ResponseEntity.ok(SubscriptionDto.from(sub.get()));
     }
 
     @PostMapping("/billing-key")
@@ -90,7 +83,7 @@ public class SubscriptionController {
                 .customerKey(req.customerKey())
                 .build();
         subscription = subscriptionService.chargeAndUpdate(subscription); // 가입 즉시 첫 결제
-        return ResponseEntity.ok(toDto(subscription));
+        return ResponseEntity.ok(SubscriptionDto.from(subscription));
     }
 
     // PAST_DUE(결제 실패) 상태를 수동으로 재시도할 때 사용. 정상 구독 중엔 자동 갱신(스케줄러)만으로 충분하다.
@@ -105,7 +98,7 @@ public class SubscriptionController {
             return ResponseEntity.badRequest().body(Map.of("error", "이미 해지된 구독입니다"));
         }
         subscription = subscriptionService.chargeAndUpdate(subscription);
-        return ResponseEntity.ok(toDto(subscription));
+        return ResponseEntity.ok(SubscriptionDto.from(subscription));
     }
 
     @PostMapping("/cancel")
@@ -121,12 +114,6 @@ public class SubscriptionController {
         // 만료일(expiresAt)은 그대로 둔다 - 이미 낸 이용 기간까지는 유지되고, 그 이후 자동 갱신만 안 되는 방식
         subscription.setStatus("CANCELED");
         subscriptionRepository.save(subscription);
-        return ResponseEntity.ok(toDto(subscription));
-    }
-
-    private SubscriptionDto toDto(Subscription s) {
-        return new SubscriptionDto(s.getId(), s.getPlanCode(), s.getStatus(), s.getStartedAt(),
-                s.getExpiresAt(), s.getPaymentProvider(), s.getBillingKey() != null,
-                s.getLastPaymentStatus(), s.getLastPaymentError());
+        return ResponseEntity.ok(SubscriptionDto.from(subscription));
     }
 }
