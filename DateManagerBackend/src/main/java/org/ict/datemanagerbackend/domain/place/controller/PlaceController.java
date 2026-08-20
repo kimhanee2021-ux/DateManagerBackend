@@ -1,5 +1,6 @@
 package org.ict.datemanagerbackend.domain.place.controller;
 
+import lombok.extern.slf4j.Slf4j;
 import org.ict.datemanagerbackend.domain.place.dto.CurationPlaceDto;
 import org.ict.datemanagerbackend.domain.place.dto.PlaceResponseDto;
 import org.ict.datemanagerbackend.domain.place.entity.PerformanceRanking;
@@ -13,26 +14,36 @@ import org.ict.datemanagerbackend.domain.place.repository.PlaceAmenityRepository
 import org.ict.datemanagerbackend.domain.place.repository.PlaceRealityRepository;
 import org.ict.datemanagerbackend.domain.place.repository.PlaceRepository;
 import org.ict.datemanagerbackend.domain.place.repository.PlaceStyleRepository;
+import org.ict.datemanagerbackend.weather.service.WeatherService;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.data.web.PageableDefault;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpMethod;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.client.RestTemplate;
+import org.springframework.web.util.UriComponentsBuilder;
+import tools.jackson.databind.JsonNode;
 
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 // KOPIS/TourAPI 동기화로 채워진 places 데이터를 큐레이션·코스빌더 화면에 내려주는 조회 API.
 // 로그인 없이 보이는 홈 탭 추천 카드에서도 쓰이므로 인증 없이 공개한다(SecurityConfig에서 permitAll 처리).
 @RestController
 @RequestMapping("/api/places")
+@Slf4j
 public class PlaceController {
 
   // 지역 통합(2026-08-19) - 충북/충남은 대전, 경북/경남은 대구 칩 하나로 묶어서 보여준다. 실제로는
@@ -61,18 +72,35 @@ public class PlaceController {
   private final PlaceRealityRepository placeRealityRepository;
   private final PlaceAmenityRepository placeAmenityRepository;
   private final PerformanceRankingRepository performanceRankingRepository;
+  private final WeatherService weatherService;
+  private final RestTemplate restTemplate = new RestTemplate();
+
+  @Value("${kakao.rest-api-key}")
+  private String kakaoRestApiKey;
+
+  // 홈탭 "내 주변"에서 좌표 최근접 풀링 대신 "같은 시/도" 매칭을 써야 하는 희소 카테고리(2026-08-20).
+  // 스포츠는 전국 몇십~몇백 곳뿐이라 최근접 N개 풀에 아예 안 걸리는 문제가 있었음
+  // (PlaceRepository.findByCategoryAndAddressContainingOrderByStartDateAsc 주석 참고). 대형
+  // 콘서트/페스티벌도 같은 문제일 수 있어서 사용자가 확인을 요청했지만, 이 엔드포인트는 category
+  // 파라미터로 "공연"만 받고 장르(서브카테고리)는 구분을 못 해서(공연 칩 자체가 여러 장르값을
+  // 가리킴, PlaceController 상단 주석 참고) 지금 구조로는 "공연 전체"가 아니라 "콘서트/페스티벌만"
+  // 따로 골라 처리할 수가 없다 - 홈탭이 subCategory를 안 넘기기 때문. 그래서 일단 스포츠만 적용하고,
+  // 공연 쪽은 subCategory 파라미터를 이 엔드포인트에 추가하는 별도 작업이 필요함(추후 판단).
+  private static final Set<String> SPARSE_NEARBY_CATEGORIES = Set.of("스포츠");
 
   public PlaceController(
       PlaceRepository placeRepository,
       PlaceStyleRepository placeStyleRepository,
       PlaceRealityRepository placeRealityRepository,
       PlaceAmenityRepository placeAmenityRepository,
-      PerformanceRankingRepository performanceRankingRepository) {
+      PerformanceRankingRepository performanceRankingRepository,
+      WeatherService weatherService) {
     this.placeRepository = placeRepository;
     this.placeStyleRepository = placeStyleRepository;
     this.placeRealityRepository = placeRealityRepository;
     this.placeAmenityRepository = placeAmenityRepository;
     this.performanceRankingRepository = performanceRankingRepository;
+    this.weatherService = weatherService;
   }
 
   // 큐레이션 탭(데이트/숙박 카드)용 조회 API. matchScore는 아직 항상 null - 로그인 유저 성향값을
@@ -87,6 +115,10 @@ public class PlaceController {
   // district는 서울/경기/부산 등에서 한 단계 더 좁히는 구/시 필터(예: "중구") - "중구"/"동구"/
   // "고성군" 같은 이름은 여러 시/도가 똑같이 쓰기 때문에, 이 값 하나만으로는 다른 지역이 섞여
   // 들어올 수 있어 반드시 region과 함께 AND로 넘겨야 한다(PlaceRepository.searchByCategoryIn 참고).
+  // energyTarget(2026-08-20): 큐레이션 탭 에너지 게이지(0~100) - 값이 있으면 scoreEnergy가 가까운
+  // 순으로 정렬됨(PlaceRepository 주석 참고).
+  // lat/lon(2026-08-20): 있으면 그 위치의 실시간 날씨를 확인해서 비가 오면 실외 장소를 제외하고,
+  // 폭염/한파면 실내 장소를 우선 정렬한다. 위치 권한이 없으면(null) 날씨 조건 없이 기존 동작 그대로.
   @GetMapping("/curation")
   public ResponseEntity<Page<CurationPlaceDto>> listCurationPlaces(
       @RequestParam(required = false) String category,
@@ -94,6 +126,9 @@ public class PlaceController {
       @RequestParam(required = false) String region,
       @RequestParam(required = false) String district,
       @RequestParam(required = false) String keyword,
+      @RequestParam(required = false) Integer energyTarget,
+      @RequestParam(required = false) Double lat,
+      @RequestParam(required = false) Double lon,
       @PageableDefault(size = 20, sort = "id", direction = Sort.Direction.DESC) Pageable pageable) {
     boolean hasCategory = category != null && !category.isBlank();
     boolean hasSubCategory = subCategory != null && !subCategory.isBlank();
@@ -108,10 +143,24 @@ public class PlaceController {
     String districtFilter = (district == null || district.isBlank()) ? null : district;
     String keywordFilter = (keyword == null || keyword.isBlank()) ? null : keyword;
 
+    boolean excludeOutdoor = false;
+    boolean indoorBoost = false;
+    if (lat != null && lon != null) {
+      try {
+        WeatherService.CurationWeatherSignal weather = weatherService.getCurationWeatherSignal(lat, lon);
+        excludeOutdoor = weather.raining();
+        indoorBoost = weather.extremeTemp();
+      } catch (Exception e) {
+        // 날씨 조회 실패해도 큐레이션 목록 자체는 정상적으로 내려줘야 하므로(챗봇 컨텍스트 조회와 같은 이유) 무시
+      }
+    }
+
     Page<Place> page = hasCategory
         ? placeRepository.searchByCategoryIn(
-            categories, hasSubCategory ? subCategory : null, r1, r2, r3, districtFilter, keywordFilter, pageable)
-        : placeRepository.searchAll(r1, r2, r3, districtFilter, keywordFilter, pageable);
+            categories, hasSubCategory ? subCategory : null, r1, r2, r3, districtFilter, keywordFilter,
+            excludeOutdoor, indoorBoost, energyTarget, pageable)
+        : placeRepository.searchAll(
+            r1, r2, r3, districtFilter, keywordFilter, excludeOutdoor, indoorBoost, energyTarget, pageable);
 
     List<Long> placeIds = page.getContent().stream().map(Place::getId).toList();
 
@@ -171,7 +220,16 @@ public class PlaceController {
       @RequestParam(required = false) String category,
       @RequestParam(defaultValue = "300") int limit) {
     List<Place> places;
-    if (category == null || category.isBlank()) {
+    if (category != null && SPARSE_NEARBY_CATEGORIES.contains(category)) {
+      String region = reverseGeocodeRegion(lat, lon);
+      log.info("희소 카테고리 내 주변 조회 - category={}, region={}", category, region);
+      places = region == null
+          ? List.of() // 역지오코딩 실패(카카오 API 오류 등) 시 엉뚱한 전국 결과를 섞어 보여주지 않고 빈 목록
+          : placeRepository.findByCategoryAndAddressContainingOrderByStartDateAsc(category, region).stream()
+              .limit(limit)
+              .toList();
+      log.info("희소 카테고리 조회 결과 {}건", places.size());
+    } else if (category == null || category.isBlank()) {
       places = placeRepository.findNearestPlaces(lat, lon, limit);
     } else {
       List<String> categories = List.of(category.split(","));
@@ -192,6 +250,46 @@ public class PlaceController {
         .map(place -> PlaceResponseDto.from(place, styleByPlaceId.get(place.getId()), rankingByPlaceId.get(place.getId())))
         .toList();
     return ResponseEntity.ok(result);
+  }
+
+  // 카카오 coord2regioncode가 주는 정식 명칭 -> place.address에 실제로 저장된 줄임말(2026-08-20 실측
+  // 확인). SportsSyncService가 경기장 좌표를 딸 때 쓰는 카카오 키워드 검색 API(coord2regioncode와는
+  // 다른 API)가 도로명주소를 "서울특별시"가 아니라 "서울"처럼 줄임말로 내려줘서, 정식 명칭 그대로
+  // LIKE에 쓰면 하나도 안 걸린다(실측 - "서울특별시"로 검색했더니 "서울 송파구..." 주소가 매칭 안 됨).
+  private static final Map<String, String> OFFICIAL_TO_SHORT_REGION_NAME = Map.ofEntries(
+      Map.entry("서울특별시", "서울"), Map.entry("부산광역시", "부산"), Map.entry("대구광역시", "대구"),
+      Map.entry("인천광역시", "인천"), Map.entry("광주광역시", "광주"), Map.entry("대전광역시", "대전"),
+      Map.entry("울산광역시", "울산"), Map.entry("세종특별자치시", "세종"), Map.entry("경기도", "경기"),
+      Map.entry("강원특별자치도", "강원"), Map.entry("충청북도", "충북"), Map.entry("충청남도", "충남"),
+      Map.entry("전북특별자치도", "전북"), Map.entry("전라남도", "전남"), Map.entry("경상북도", "경북"),
+      Map.entry("경상남도", "경남"), Map.entry("제주특별자치도", "제주")
+  );
+
+  // 좌표 -> "시/도" 이름 역지오코딩(2026-08-20, SPARSE_NEARBY_CATEGORIES 처리용). 카카오 로컬 API의
+  // coord2regioncode로 region_1depth_name(정식 명칭, 예: "서울특별시")을 받은 뒤, 위 매핑으로 실제
+  // 주소에 쓰이는 줄임말로 바꿔서 반환한다. 실패하면 null - 호출부가 빈 목록으로 처리한다(엉뚱한
+  // 전국 결과를 섞어 보여주는 것보다 안전).
+  private String reverseGeocodeRegion(double lat, double lon) {
+    String url = UriComponentsBuilder.fromUriString("https://dapi.kakao.com/v2/local/geo/coord2regioncode.json")
+        .queryParam("x", lon)
+        .queryParam("y", lat)
+        .toUriString();
+    try {
+      HttpHeaders headers = new HttpHeaders();
+      headers.add("Authorization", "KakaoAK " + kakaoRestApiKey);
+      JsonNode root = restTemplate.exchange(
+          java.net.URI.create(url), HttpMethod.GET, new HttpEntity<>(null, headers), JsonNode.class
+      ).getBody();
+      if (root == null) return null;
+      JsonNode first = root.path("documents").get(0);
+      if (first == null) return null;
+      String official = first.path("region_1depth_name").asText("");
+      if (official.isBlank()) return null;
+      return OFFICIAL_TO_SHORT_REGION_NAME.getOrDefault(official, official);
+    } catch (Exception e) {
+      log.warn("좌표 역지오코딩 실패 (lat={}, lon={})", lat, lon, e);
+      return null;
+    }
   }
 
   // 큐레이션 탭 "내 주변만 보기" 토글용 - findNearestPlaces는 카테고리 필터를 지원하지 않아서, 필터링

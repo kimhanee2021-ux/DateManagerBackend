@@ -44,25 +44,57 @@ public interface PlaceRepository extends JpaRepository<Place, Long> {
   // (2026-08-19 발견 - 부산 "문화시설" 803건이 전부 place_category_id NULL이라 목록이 텅 비었었음).
   // LEFT JOIN + pc.subCategory로 바꾸면 연결이 없는 장소도 일단 후보에 남고, subCategory를 실제로
   // 지정했을 때만 그 값과 비교해서 걸러진다.
+  // energyTarget(에너지 게이지, 2026-08-20): 유저가 큐레이션 탭에서 직접 조정하는 "지금 원하는
+  // 활력 정도"(0~100) - 아직 온보딩 성향값 저장 파이프라인이 없어서(팀원 담당, 진행 전) 저장된
+  // 유저 성향으로 자동 매칭을 할 수 없는 동안의 임시 대안이다. null이면 CASE가 모든 행에 0을 줘서
+  // 사실상 무시되고 기존 id DESC 정렬만 적용되며, 값이 있으면 "장소의 에너지 점수가 게이지 값과
+  // 가까운 순"으로 정렬한다.
+  // excludeOutdoor/indoorBoost(날씨 기반 실내외, 2026-08-20): 비가 오면(excludeOutdoor=true)
+  // 실외 장소(isIndoor=0)는 결과에서 아예 뺀다(하드 필터) - 어차피 못 갈 곳이라서. 폭염/한파일 때는
+  // (indoorBoost=true) 빼지는 않고 실내 장소를 정렬 우선순위로 앞에 둔다(소프트 부스트) - 극단
+  // 날씨에도 야외 장소를 원할 수는 있으니 아예 안 보여주는 건 과함(2026-08-20 사용자 결정, 에너지
+  // 게이지와 같은 "필터보다는 정렬" 원칙). 둘 다 false/null로 넘기면 아무 효과 없음(기존 동작 그대로).
+  // scoreEnergy/isIndoor가 없는 장소(placeCategory 미연결)는 중립값(50)/실내(1) 기준으로 계산한다
+  // (COALESCE) - 정렬 밖으로 밀려나지 않고 "보통"으로 취급됨.
+  // p.startDate ASC(2026-08-20): 공연/스포츠처럼 특정 날짜에만 열리는 장소는 데이터 생성순(id desc)이
+  // 아니라 "곧 열리는 순"으로 보여야 실제로 갈 수 있는 것부터 보인다(사용자가 스포츠 카테고리에서
+  // 실제로 발견함). startDate가 없는 장소(대부분의 카테고리)는 전부 null이라 서로 순위가 안 갈리고
+  // 뒤의 정렬 기준으로 넘어가므로, 날짜가 있는 카테고리에만 자연스럽게 효과가 있다(오라클은 ASC에서
+  // NULL을 가장 뒤로 보내는 게 기본 동작이라 별도 NULLS LAST 지정이 필요 없음).
   @Query("SELECT p FROM Place p LEFT JOIN p.placeCategory pc WHERE p.category IN :categories "
       + "AND (:subCategory IS NULL OR pc.subCategory = :subCategory) AND "
       + "(p.address LIKE CONCAT('%', :r1, '%') "
       + "OR (:r2 IS NOT NULL AND p.address LIKE CONCAT('%', :r2, '%')) "
       + "OR (:r3 IS NOT NULL AND p.address LIKE CONCAT('%', :r3, '%'))) "
       + "AND (:district IS NULL OR p.address LIKE CONCAT('%', :district, '%')) "
-      + "AND (:keyword IS NULL OR p.name LIKE CONCAT('%', :keyword, '%'))")
+      + "AND (:keyword IS NULL OR p.name LIKE CONCAT('%', :keyword, '%')) "
+      + "AND (:excludeOutdoor = false OR COALESCE(pc.isIndoor, 1) = 1) "
+      + "ORDER BY "
+      + "CASE WHEN :indoorBoost = false THEN 0 ELSE (1 - COALESCE(pc.isIndoor, 1)) END ASC, "
+      + "p.startDate ASC, "
+      + "CASE WHEN :energyTarget IS NULL THEN 0 "
+      + "ELSE ABS(COALESCE(pc.scoreEnergy, 50) - :energyTarget) END ASC")
   Page<Place> searchByCategoryIn(
       List<String> categories, String subCategory, String r1, String r2, String r3, String district,
-      String keyword, Pageable pageable);
+      String keyword, boolean excludeOutdoor, boolean indoorBoost, Integer energyTarget, Pageable pageable);
 
-  // 카테고리 칩을 아예 안 고른(=전체) 경우. 위 searchByCategoryIn과 지역/구시/키워드 조건은 동일하다.
-  @Query("SELECT p FROM Place p WHERE "
+  // 카테고리 칩을 아예 안 고른(=전체) 경우. 위 searchByCategoryIn과 지역/구시/키워드/날씨/에너지게이지
+  // 조건은 동일하다.
+  @Query("SELECT p FROM Place p LEFT JOIN p.placeCategory pc WHERE "
       + "(p.address LIKE CONCAT('%', :r1, '%') "
       + "OR (:r2 IS NOT NULL AND p.address LIKE CONCAT('%', :r2, '%')) "
       + "OR (:r3 IS NOT NULL AND p.address LIKE CONCAT('%', :r3, '%'))) "
       + "AND (:district IS NULL OR p.address LIKE CONCAT('%', :district, '%')) "
-      + "AND (:keyword IS NULL OR p.name LIKE CONCAT('%', :keyword, '%'))")
-  Page<Place> searchAll(String r1, String r2, String r3, String district, String keyword, Pageable pageable);
+      + "AND (:keyword IS NULL OR p.name LIKE CONCAT('%', :keyword, '%')) "
+      + "AND (:excludeOutdoor = false OR COALESCE(pc.isIndoor, 1) = 1) "
+      + "ORDER BY "
+      + "CASE WHEN :indoorBoost = false THEN 0 ELSE (1 - COALESCE(pc.isIndoor, 1)) END ASC, "
+      + "p.startDate ASC, "
+      + "CASE WHEN :energyTarget IS NULL THEN 0 "
+      + "ELSE ABS(COALESCE(pc.scoreEnergy, 50) - :energyTarget) END ASC")
+  Page<Place> searchAll(
+      String r1, String r2, String r3, String district, String keyword,
+      boolean excludeOutdoor, boolean indoorBoost, Integer energyTarget, Pageable pageable);
 
   // 숙박 탭 카테고리 칩에 "OO곳" 개수를 보여주기 위한 대분류 안 세부분류별 집계.
   // 세부분류가 아직 안 붙은(placeCategory가 null인) 장소는 이 결과에 안 잡힌다.
@@ -82,6 +114,14 @@ public interface PlaceRepository extends JpaRepository<Place, Long> {
       + "GROUP BY p.placeCategory.subCategory")
   List<Object[]> countGroupedBySubCategoryAndAddressContaining(
       String category, String r1, String r2, String r3, String district);
+
+  // 홈탭 "내 주변"에서 스포츠처럼 희소한 카테고리용(2026-08-20) - findNearestPlaces(좌표 최근접 N개
+  // 풀링 후 카테고리로 거르는 방식)은 전국에 몇십~몇백 곳뿐인 카테고리엔 안 맞는다. 흔한 카테고리
+  // (맛집 등) 수천~수만 건이 이미 최근접 풀을 다 채워버려서, 정작 몇 km만 더 가면 있는 경기장이
+  // 풀에 아예 안 들어가 결과가 0건이 되는 문제가 있었다(PlaceController.listNearbyPlaces 참고). 그래서
+  // 좌표 거리 대신 "같은 시/도"(카카오 좌표->행정구역 API로 역지오코딩) 기준으로 찾고, 어차피 날짜가
+  // 있는 카테고리라 startDate 오름차순(곧 열리는 순)으로 정렬한다.
+  List<Place> findByCategoryAndAddressContainingOrderByStartDateAsc(String category, String addressKeyword);
 
   // 이름에 특정 키워드가 포함된 장소를 찾는다 - 프랜차이즈/체인점 블랙리스트 정리용
   // (TourApiSyncService.cleanupBlacklistedPlaces() 참고).
