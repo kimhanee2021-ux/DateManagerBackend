@@ -107,6 +107,16 @@ public class AdminPlaceController {
     return ResponseEntity.ok(adminPlaceService.importFullDump(dump));
   }
 
+  // "홍원" 좌표 오차(2026-08-20) 발견 후 TourAPI 출처 전체를 카카오 주소 검색으로 재검증하는
+  // 배치. 오래 걸려서(수십 분~1시간대) 백그라운드로 시작만 시키고 바로 응답한다.
+  @PostMapping("/verify-tourapi-coordinates")
+  public ResponseEntity<?> verifyTourApiCoordinates(Authentication authentication) {
+    if (!adminAuthService.isAdmin(authentication)) {
+      return ResponseEntity.status(403).body(Map.of("error", "관리자만 접근할 수 있습니다"));
+    }
+    return ResponseEntity.ok(adminPlaceService.verifyTourApiCoordinates());
+  }
+
   @GetMapping("/sync-status")
   public ResponseEntity<?> placesSyncStatusEndpoint(Authentication authentication) {
     if (!adminAuthService.isAdmin(authentication)) {

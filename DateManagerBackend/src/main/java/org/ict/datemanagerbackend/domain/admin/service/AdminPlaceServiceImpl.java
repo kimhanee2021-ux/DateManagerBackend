@@ -16,6 +16,7 @@ import org.ict.datemanagerbackend.domain.place.service.KakaoPlaceSyncService;
 import org.ict.datemanagerbackend.domain.place.service.LodgingCsvSyncService;
 import org.ict.datemanagerbackend.domain.place.service.MuseumSyncService;
 import org.ict.datemanagerbackend.domain.place.service.NaverPlaceSyncService;
+import org.ict.datemanagerbackend.domain.place.service.PlaceCoordinateVerificationService;
 import org.ict.datemanagerbackend.domain.place.service.PlaceDedupService;
 import org.ict.datemanagerbackend.domain.place.service.PlaceSyncService;
 import org.ict.datemanagerbackend.domain.place.service.SportsSyncService;
@@ -48,6 +49,7 @@ public class AdminPlaceServiceImpl implements AdminPlaceService {
   private final PlaceRealityRepository placeRealityRepository;
   private final PlaceAmenityRepository placeAmenityRepository;
   private final SportsSyncService sportsSyncService;
+  private final PlaceCoordinateVerificationService placeCoordinateVerificationService;
 
   public AdminPlaceServiceImpl(PlaceRepository placeRepository, PlaceCategoryRepository placeCategoryRepository,
                                 PlaceSyncService placeSyncService, TourApiSyncService tourApiSyncService,
@@ -55,7 +57,8 @@ public class AdminPlaceServiceImpl implements AdminPlaceService {
                                 KakaoPlaceSyncService kakaoPlaceSyncService, LodgingCsvSyncService lodgingCsvSyncService,
                                 CultureEventSyncService cultureEventSyncService, PlaceDedupService placeDedupService,
                                 PlaceStyleRepository placeStyleRepository, PlaceRealityRepository placeRealityRepository,
-                                PlaceAmenityRepository placeAmenityRepository, SportsSyncService sportsSyncService) {
+                                PlaceAmenityRepository placeAmenityRepository, SportsSyncService sportsSyncService,
+                                PlaceCoordinateVerificationService placeCoordinateVerificationService) {
     this.placeRepository = placeRepository;
     this.placeCategoryRepository = placeCategoryRepository;
     this.placeSyncService = placeSyncService;
@@ -70,6 +73,7 @@ public class AdminPlaceServiceImpl implements AdminPlaceService {
     this.placeRealityRepository = placeRealityRepository;
     this.placeAmenityRepository = placeAmenityRepository;
     this.sportsSyncService = sportsSyncService;
+    this.placeCoordinateVerificationService = placeCoordinateVerificationService;
   }
 
   @Override
@@ -98,6 +102,18 @@ public class AdminPlaceServiceImpl implements AdminPlaceService {
   @Override
   public Map<String, Integer> mergeDuplicatePlaces() {
     return placeDedupService.mergeDuplicatePlaces();
+  }
+
+  // TourAPI 3만8천여건을 카카오와 하나씩 대조하느라 수십 분~1시간대까지 걸릴 수 있어(2026-08-20),
+  // 다른 관리자 트리거처럼 동기로 기다리게 하면 HTTP 요청이 타임아웃난다. 가상 스레드로 띄우고
+  // 바로 응답만 반환 - 진행 상황/완료 여부는 서버 로그(PlaceCoordinateVerificationServiceImpl)로 확인.
+  @Override
+  public Map<String, String> verifyTourApiCoordinates() {
+    Thread.ofVirtual().name("tourapi-coord-verify").start(placeCoordinateVerificationService::verifyTourApiCoordinates);
+    return Map.of(
+        "status", "started",
+        "message", "백그라운드로 실행을 시작했습니다. 진행 상황과 완료 여부는 서버 로그에서 확인하세요."
+    );
   }
 
   @Override

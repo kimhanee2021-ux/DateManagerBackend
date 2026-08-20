@@ -130,4 +130,12 @@ public class Place {
   @Column(name = "performance_state", length = 20)
   private String performanceState; // 공연상태 (KOPIS prfstate: 공연예정/공연중/공연완료)
 
+  // TourAPI(공공데이터) 좌표가 실제 위치와 수백m씩 어긋나는 사례가 있어(2026-08-20, "홍원" 건 -
+  // mapx/mapy 자체가 원본에서부터 틀림) PlaceCoordinateVerificationService가 주소 기반으로 카카오와
+  // 대조해 한 번 검증한 장소는 true로 표시한다. TourApiSyncServiceImpl의 매일 새벽 재동기화가
+  // 검증 완료된 좌표를 TourAPI 원본 값으로 다시 덮어쓰지 않도록 막는 용도.
+  @Setter
+  @Column(name = "coordinate_verified")
+  private Boolean coordinateVerified;
+
 }
