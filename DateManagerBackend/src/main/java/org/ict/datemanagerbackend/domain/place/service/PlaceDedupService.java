@@ -2,6 +2,7 @@ package org.ict.datemanagerbackend.domain.place.service;
 
 import org.ict.datemanagerbackend.domain.place.entity.Place;
 
+import java.util.Map;
 import java.util.Optional;
 
 // 같은 실제 장소가 TourAPI/KOPIS/네이버/카카오 등 서로 다른 소스에서 각각 동기화되면서 중복 저장되는
@@ -10,4 +11,7 @@ import java.util.Optional;
 public interface PlaceDedupService {
   // <<이름+좌표가 비슷한 기존 장소(다른 소스에서 이미 저장한 것)를 찾아 반환. 없으면 신규 저장 대상>>
   Optional<Place> findDuplicate(String name, Double latitude, Double longitude);
+  // <<반경 확대(2026-08-20) 이전에 이미 저장돼 있던, 이름이 완전히 같고 가까운 거리의 중복 장소를
+  // 한 번에 정리 - 그룹마다 id가 가장 작은(가장 먼저 저장된) 장소만 남기고 나머지는 삭제>>
+  Map<String, Integer> mergeDuplicatePlaces();
 }

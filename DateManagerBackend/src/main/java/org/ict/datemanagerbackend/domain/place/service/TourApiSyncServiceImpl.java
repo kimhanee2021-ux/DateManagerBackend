@@ -100,7 +100,11 @@ public class TourApiSyncServiceImpl implements TourApiSyncService {
       "현대백화점", "롯데백화점", "신세계백화점", "갤러리아", "AK플라자", "대구백화점", "동아백화점",
       // 아울렛
       "롯데아울렛", "롯데프리미엄아울렛", "모다아울렛", "신세계사이먼프리미엄아울렛",
-      "현대프리미엄아울렛", "뉴코아아울렛", "뉴코아팩토리아울렛", "2001아울렛"
+      "현대프리미엄아울렛", "뉴코아아울렛", "뉴코아팩토리아울렛", "2001아울렛",
+      // 복합쇼핑몰 - 이름에 "백화점"/"아울렛"이 안 들어가서 위 두 그룹과 같은 문제를 겪고 있었다
+      // (2026-08-20, 사용자가 IFC몰/롯데몰/타임스퀘어/타임빌라스에서 브랜드 매장 중복을 직접 확인해서 알려줌).
+      // 타임빌라스는 롯데가 기존 롯데몰 일부 지점을 리브랜딩한 이름이라 롯데몰과 별개로 둔다.
+      "IFC몰", "롯데몰", "타임스퀘어", "타임빌라스"
   );
 
   // 스타필드도 같은 문제라 여기 합쳤다(2026-08-19) - "스타필드"가 들어간 쇼핑 카테고리 장소 144건을
@@ -108,7 +112,13 @@ public class TourApiSyncServiceImpl implements TourApiSyncService {
   // 단 하나도 없었다(스타필드는 TourAPI가 몰 자체를 별도 장소로 안 주는 듯). 그래서 MALL_PREFIXES에
   // 넣어서 예외로 지켜줄 이름이 없어 - "스타필드"가 들어간 쇼핑 카테고리는 전부 걸러낸다.
   private boolean isBrandInsideMall(String name) {
-    if (name == null || !(name.contains("백화점") || name.contains("아울렛") || name.contains("스타필드"))) {
+    if (name == null) {
+      return false;
+    }
+    boolean looksLikeMallBrandEntry = name.contains("백화점") || name.contains("아울렛")
+        || name.contains("스타필드") || name.contains("IFC몰") || name.contains("롯데몰")
+        || name.contains("타임스퀘어") || name.contains("타임빌라스");
+    if (!looksLikeMallBrandEntry) {
       return false;
     }
     return MALL_PREFIXES.stream().noneMatch(name::startsWith);
