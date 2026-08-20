@@ -133,6 +133,10 @@ openai:
 kakao:
   rest-api-key: ${KAKAO_REST_API_KEY}
 
+#서울올림픽기념국민체육진흥공단 체육진흥투표권(스포츠toto,프로토) 발매대상 경기정보 API 인증키 - SportsSyncService에서 사용
+sportstoto:
+  service-key: ${SPORTS_API_SERVICE_KEY}
+
 #서울 열린데이터광장 숙박업 인허가 CSV 경로 - LodgingCsvSyncService에서 사용. 실시간 API가 아니라
 #수시로 갱신되는 파일 다운로드 방식이라(반복 호출 가능한 REST API 없음), .env로 매번 새 파일 경로를
 #지정하지 않아도 되게 프로젝트 루트 기준 기본 경로를 둔다 - 새 CSV를 받으면 이 경로에 덮어쓰기만 하면 됨.

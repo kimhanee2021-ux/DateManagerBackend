@@ -1,5 +1,7 @@
 package org.ict.datemanagerbackend.domain.user.controller;
 
+import org.ict.datemanagerbackend.domain.user.dto.ChangePasswordRequest;
+import org.ict.datemanagerbackend.domain.user.dto.UpdateMeRequest;
 import org.ict.datemanagerbackend.domain.user.entity.User;
 import org.ict.datemanagerbackend.domain.user.repository.UserRepository;
 import org.ict.datemanagerbackend.domain.user.service.ProfileImageService;
@@ -34,12 +36,6 @@ public class UserController {
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
         this.profileImageService = profileImageService;
-    }
-
-    public record UpdateMeRequest(String nickname, String gender) {
-    }
-
-    public record ChangePasswordRequest(String currentPassword, String newPassword) {
     }
 
     @GetMapping

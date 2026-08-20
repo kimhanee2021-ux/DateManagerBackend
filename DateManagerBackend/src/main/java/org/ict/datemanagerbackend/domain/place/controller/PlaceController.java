@@ -1,52 +1,106 @@
 package org.ict.datemanagerbackend.domain.place.controller;
 
+import lombok.extern.slf4j.Slf4j;
 import org.ict.datemanagerbackend.domain.place.dto.CurationPlaceDto;
 import org.ict.datemanagerbackend.domain.place.dto.PlaceResponseDto;
+import org.ict.datemanagerbackend.domain.place.entity.PerformanceRanking;
 import org.ict.datemanagerbackend.domain.place.entity.Place;
 import org.ict.datemanagerbackend.domain.place.entity.PlaceAmenity;
 import org.ict.datemanagerbackend.domain.place.entity.PlaceCategory;
 import org.ict.datemanagerbackend.domain.place.entity.PlaceReality;
 import org.ict.datemanagerbackend.domain.place.entity.PlaceStyle;
+import org.ict.datemanagerbackend.domain.place.repository.PerformanceRankingRepository;
 import org.ict.datemanagerbackend.domain.place.repository.PlaceAmenityRepository;
 import org.ict.datemanagerbackend.domain.place.repository.PlaceRealityRepository;
 import org.ict.datemanagerbackend.domain.place.repository.PlaceRepository;
 import org.ict.datemanagerbackend.domain.place.repository.PlaceStyleRepository;
+import org.ict.datemanagerbackend.weather.service.WeatherService;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.data.web.PageableDefault;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpMethod;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.client.RestTemplate;
+import org.springframework.web.util.UriComponentsBuilder;
+import tools.jackson.databind.JsonNode;
 
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 // KOPIS/TourAPI 동기화로 채워진 places 데이터를 큐레이션·코스빌더 화면에 내려주는 조회 API.
 // 로그인 없이 보이는 홈 탭 추천 카드에서도 쓰이므로 인증 없이 공개한다(SecurityConfig에서 permitAll 처리).
 @RestController
 @RequestMapping("/api/places")
+@Slf4j
 public class PlaceController {
+
+  // 지역 통합(2026-08-19) - 충북/충남은 대전, 경북/경남은 대구 칩 하나로 묶어서 보여준다. 실제로는
+  // 대전/대구 자체 데이터가 아니라 충청북도/충청남도/경상북도/경상남도(정식 행정구역명) 데이터가
+  // 훨씬 많은데(각 2,800~6,000건), 두 지역씩 4개 칩으로 쪼개기엔 앱 성격상 너무 세분화된다고 판단해
+  // "대전"/"대구"를 고르면 그 지역들 데이터까지 같이 보여주는 방식으로 합쳤다.
+  // "전남" 단독 항목도 사실은 통합이 아니라 별칭(alias)이다 - 실제 주소는 전부 "전라남도"로
+  // 저장되는데 칩 값은 줄임말 "전남"이라 그동안 이 칩을 눌러도 0건이 나오고 있었다(2026-08-19,
+  // 사용자가 실제 화면에서 "전남 데이터가 없다"고 발견 - 다른 4개 지역과 똑같은 매칭 버그였는데
+  // 이것만 고칠 때 놓쳤었다). 전북은 실제 주소가 "전북특별자치도"로 바뀌어 있어서 우연히 "전북"
+  // 줄임말과 그대로 겹쳐 이 버그를 안 겪었다.
+  private static final Map<String, List<String>> MERGED_REGION_KEYWORDS = Map.of(
+      "대전", List.of("대전", "충청북도", "충청남도"),
+      "대구", List.of("대구", "경상북도", "경상남도"),
+      "전남", List.of("전라남도")
+  );
+
+  // region 하나를 최대 3개의 address LIKE 키워드로 펼친다. 통합 대상이 아니면 그 값 하나만 담긴
+  // 리스트를 돌려준다 - 호출부는 통합 여부를 신경 쓸 필요 없이 항상 이 결과만 쓰면 된다.
+  private static List<String> expandRegion(String region) {
+    return MERGED_REGION_KEYWORDS.getOrDefault(region, List.of(region));
+  }
 
   private final PlaceRepository placeRepository;
   private final PlaceStyleRepository placeStyleRepository;
   private final PlaceRealityRepository placeRealityRepository;
   private final PlaceAmenityRepository placeAmenityRepository;
+  private final PerformanceRankingRepository performanceRankingRepository;
+  private final WeatherService weatherService;
+  private final RestTemplate restTemplate = new RestTemplate();
+
+  @Value("${kakao.rest-api-key}")
+  private String kakaoRestApiKey;
+
+  // 홈탭 "내 주변"에서 좌표 최근접 풀링 대신 "같은 시/도" 매칭을 써야 하는 희소 카테고리(2026-08-20).
+  // 스포츠는 전국 몇십~몇백 곳뿐이라 최근접 N개 풀에 아예 안 걸리는 문제가 있었음
+  // (PlaceRepository.findByCategoryAndAddressContainingOrderByStartDateAsc 주석 참고). 대형
+  // 콘서트/페스티벌도 같은 문제일 수 있어서 사용자가 확인을 요청했지만, 이 엔드포인트는 category
+  // 파라미터로 "공연"만 받고 장르(서브카테고리)는 구분을 못 해서(공연 칩 자체가 여러 장르값을
+  // 가리킴, PlaceController 상단 주석 참고) 지금 구조로는 "공연 전체"가 아니라 "콘서트/페스티벌만"
+  // 따로 골라 처리할 수가 없다 - 홈탭이 subCategory를 안 넘기기 때문. 그래서 일단 스포츠만 적용하고,
+  // 공연 쪽은 subCategory 파라미터를 이 엔드포인트에 추가하는 별도 작업이 필요함(추후 판단).
+  private static final Set<String> SPARSE_NEARBY_CATEGORIES = Set.of("스포츠");
 
   public PlaceController(
       PlaceRepository placeRepository,
       PlaceStyleRepository placeStyleRepository,
       PlaceRealityRepository placeRealityRepository,
-      PlaceAmenityRepository placeAmenityRepository) {
+      PlaceAmenityRepository placeAmenityRepository,
+      PerformanceRankingRepository performanceRankingRepository,
+      WeatherService weatherService) {
     this.placeRepository = placeRepository;
     this.placeStyleRepository = placeStyleRepository;
     this.placeRealityRepository = placeRealityRepository;
     this.placeAmenityRepository = placeAmenityRepository;
+    this.performanceRankingRepository = performanceRankingRepository;
+    this.weatherService = weatherService;
   }
 
   // 큐레이션 탭(데이트/숙박 카드)용 조회 API. matchScore는 아직 항상 null - 로그인 유저 성향값을
@@ -54,21 +108,59 @@ public class PlaceController {
   // 대체 정렬한다.
   // category는 콤마로 여러 값을 묶어 보낼 수 있다 - "공연" 칩처럼 실제 DB 값이 여러 개(장르명)로
   // 나뉘어 있는 경우를 프론트가 한 번에 필터링하기 위해서다(2026-08-14).
+  // region은 지역 필터용(2026-08-19) - 별도 시/도 컬럼이 없어서 address에 이 문자열이 포함되는
+  // 장소만 남긴다(예: region=서울 -> "서울특별시 ..." 주소만 통과).
+  // keyword는 장소 이름 검색용(2026-08-19) - 지역/카테고리 필터와 AND로 조합된다(예: 제주 지역
+  // 필터를 걸어둔 채로 검색하면 제주 안에서만 이름이 매치되는 장소를 찾는다).
+  // district는 서울/경기/부산 등에서 한 단계 더 좁히는 구/시 필터(예: "중구") - "중구"/"동구"/
+  // "고성군" 같은 이름은 여러 시/도가 똑같이 쓰기 때문에, 이 값 하나만으로는 다른 지역이 섞여
+  // 들어올 수 있어 반드시 region과 함께 AND로 넘겨야 한다(PlaceRepository.searchByCategoryIn 참고).
+  // energyTarget(2026-08-20): 큐레이션 탭 에너지 게이지(0~100) - 값이 있으면 scoreEnergy가 가까운
+  // 순으로 정렬됨(PlaceRepository 주석 참고).
+  // lat/lon(2026-08-20): 있으면 그 위치의 실시간 날씨를 확인해서 비가 오면 실외 장소를 제외하고,
+  // 폭염/한파면 실내 장소를 우선 정렬한다. 위치 권한이 없으면(null) 날씨 조건 없이 기존 동작 그대로.
   @GetMapping("/curation")
   public ResponseEntity<Page<CurationPlaceDto>> listCurationPlaces(
       @RequestParam(required = false) String category,
       @RequestParam(required = false) String subCategory,
+      @RequestParam(required = false) String region,
+      @RequestParam(required = false) String district,
+      @RequestParam(required = false) String keyword,
+      @RequestParam(required = false) Integer energyTarget,
+      @RequestParam(required = false) Double lat,
+      @RequestParam(required = false) Double lon,
       @PageableDefault(size = 20, sort = "id", direction = Sort.Direction.DESC) Pageable pageable) {
-    Page<Place> page;
-    if (category != null && !category.isBlank() && subCategory != null && !subCategory.isBlank()) {
-      page = placeRepository.findByCategoryAndPlaceCategory_SubCategory(category, subCategory, pageable);
-    } else if (category == null || category.isBlank()) {
-      page = placeRepository.findAll(pageable);
-    } else if (category.contains(",")) {
-      page = placeRepository.findByCategoryIn(List.of(category.split(",")), pageable);
-    } else {
-      page = placeRepository.findByCategory(category, pageable);
+    boolean hasCategory = category != null && !category.isBlank();
+    boolean hasSubCategory = subCategory != null && !subCategory.isBlank();
+    List<String> categories = hasCategory ? List.of(category.split(",")) : null;
+
+    // region이 없으면 빈 문자열을 r1으로 넘긴다 - address LIKE '%%'는 모든 행에 걸리므로
+    // "지역 필터 없음"과 같은 효과를 낸다(PlaceRepository.searchByCategoryIn 주석 참고).
+    List<String> regionKeywords = (region == null || region.isBlank()) ? List.of("") : expandRegion(region);
+    String r1 = regionKeywords.get(0);
+    String r2 = regionKeywords.size() > 1 ? regionKeywords.get(1) : null;
+    String r3 = regionKeywords.size() > 2 ? regionKeywords.get(2) : null;
+    String districtFilter = (district == null || district.isBlank()) ? null : district;
+    String keywordFilter = (keyword == null || keyword.isBlank()) ? null : keyword;
+
+    boolean excludeOutdoor = false;
+    boolean indoorBoost = false;
+    if (lat != null && lon != null) {
+      try {
+        WeatherService.CurationWeatherSignal weather = weatherService.getCurationWeatherSignal(lat, lon);
+        excludeOutdoor = weather.raining();
+        indoorBoost = weather.extremeTemp();
+      } catch (Exception e) {
+        // 날씨 조회 실패해도 큐레이션 목록 자체는 정상적으로 내려줘야 하므로(챗봇 컨텍스트 조회와 같은 이유) 무시
+      }
     }
+
+    Page<Place> page = hasCategory
+        ? placeRepository.searchByCategoryIn(
+            categories, hasSubCategory ? subCategory : null, r1, r2, r3, districtFilter, keywordFilter,
+            excludeOutdoor, indoorBoost, energyTarget, pageable)
+        : placeRepository.searchAll(
+            r1, r2, r3, districtFilter, keywordFilter, excludeOutdoor, indoorBoost, energyTarget, pageable);
 
     List<Long> placeIds = page.getContent().stream().map(Place::getId).toList();
 
@@ -81,11 +173,19 @@ public class PlaceController {
             Collectors.mapping(PlaceAmenity::getAmenityTag, Collectors.toList())
         ));
 
+    Map<Long, PerformanceRanking> rankingByPlaceId = performanceRankingRepository.findByPlace_IdIn(placeIds).stream()
+        .collect(Collectors.toMap(r -> r.getPlace().getId(), r -> r));
+
+    Map<Long, PlaceStyle> styleByPlaceId = placeStyleRepository.findByPlace_IdIn(placeIds).stream()
+        .collect(Collectors.toMap(s -> s.getPlace().getId(), s -> s));
+
     return ResponseEntity.ok(page.map(place -> {
       PlaceCategory placeCategory = place.getPlaceCategory();
       PlaceReality reality = realityByPlaceId.get(place.getId());
       List<String> amenities = amenitiesByPlaceId.getOrDefault(place.getId(), List.of());
-      return CurationPlaceDto.from(place, placeCategory, reality, amenities);
+      PerformanceRanking ranking = rankingByPlaceId.get(place.getId());
+      PlaceStyle style = styleByPlaceId.get(place.getId());
+      return CurationPlaceDto.from(place, placeCategory, reality, amenities, ranking, style);
     }));
   }
 
@@ -120,7 +220,16 @@ public class PlaceController {
       @RequestParam(required = false) String category,
       @RequestParam(defaultValue = "300") int limit) {
     List<Place> places;
-    if (category == null || category.isBlank()) {
+    if (category != null && SPARSE_NEARBY_CATEGORIES.contains(category)) {
+      String region = reverseGeocodeRegion(lat, lon);
+      log.info("희소 카테고리 내 주변 조회 - category={}, region={}", category, region);
+      places = region == null
+          ? List.of() // 역지오코딩 실패(카카오 API 오류 등) 시 엉뚱한 전국 결과를 섞어 보여주지 않고 빈 목록
+          : placeRepository.findByCategoryAndAddressContainingOrderByStartDateAsc(category, region).stream()
+              .limit(limit)
+              .toList();
+      log.info("희소 카테고리 조회 결과 {}건", places.size());
+    } else if (category == null || category.isBlank()) {
       places = placeRepository.findNearestPlaces(lat, lon, limit);
     } else {
       List<String> categories = List.of(category.split(","));
@@ -134,11 +243,53 @@ public class PlaceController {
     List<Long> placeIds = places.stream().map(Place::getId).toList();
     Map<Long, PlaceStyle> styleByPlaceId = placeStyleRepository.findByPlace_IdIn(placeIds).stream()
         .collect(Collectors.toMap(s -> s.getPlace().getId(), s -> s));
+    Map<Long, PerformanceRanking> rankingByPlaceId = performanceRankingRepository.findByPlace_IdIn(placeIds).stream()
+        .collect(Collectors.toMap(r -> r.getPlace().getId(), r -> r));
 
     List<PlaceResponseDto> result = places.stream()
-        .map(place -> PlaceResponseDto.from(place, styleByPlaceId.get(place.getId())))
+        .map(place -> PlaceResponseDto.from(place, styleByPlaceId.get(place.getId()), rankingByPlaceId.get(place.getId())))
         .toList();
     return ResponseEntity.ok(result);
+  }
+
+  // 카카오 coord2regioncode가 주는 정식 명칭 -> place.address에 실제로 저장된 줄임말(2026-08-20 실측
+  // 확인). SportsSyncService가 경기장 좌표를 딸 때 쓰는 카카오 키워드 검색 API(coord2regioncode와는
+  // 다른 API)가 도로명주소를 "서울특별시"가 아니라 "서울"처럼 줄임말로 내려줘서, 정식 명칭 그대로
+  // LIKE에 쓰면 하나도 안 걸린다(실측 - "서울특별시"로 검색했더니 "서울 송파구..." 주소가 매칭 안 됨).
+  private static final Map<String, String> OFFICIAL_TO_SHORT_REGION_NAME = Map.ofEntries(
+      Map.entry("서울특별시", "서울"), Map.entry("부산광역시", "부산"), Map.entry("대구광역시", "대구"),
+      Map.entry("인천광역시", "인천"), Map.entry("광주광역시", "광주"), Map.entry("대전광역시", "대전"),
+      Map.entry("울산광역시", "울산"), Map.entry("세종특별자치시", "세종"), Map.entry("경기도", "경기"),
+      Map.entry("강원특별자치도", "강원"), Map.entry("충청북도", "충북"), Map.entry("충청남도", "충남"),
+      Map.entry("전북특별자치도", "전북"), Map.entry("전라남도", "전남"), Map.entry("경상북도", "경북"),
+      Map.entry("경상남도", "경남"), Map.entry("제주특별자치도", "제주")
+  );
+
+  // 좌표 -> "시/도" 이름 역지오코딩(2026-08-20, SPARSE_NEARBY_CATEGORIES 처리용). 카카오 로컬 API의
+  // coord2regioncode로 region_1depth_name(정식 명칭, 예: "서울특별시")을 받은 뒤, 위 매핑으로 실제
+  // 주소에 쓰이는 줄임말로 바꿔서 반환한다. 실패하면 null - 호출부가 빈 목록으로 처리한다(엉뚱한
+  // 전국 결과를 섞어 보여주는 것보다 안전).
+  private String reverseGeocodeRegion(double lat, double lon) {
+    String url = UriComponentsBuilder.fromUriString("https://dapi.kakao.com/v2/local/geo/coord2regioncode.json")
+        .queryParam("x", lon)
+        .queryParam("y", lat)
+        .toUriString();
+    try {
+      HttpHeaders headers = new HttpHeaders();
+      headers.add("Authorization", "KakaoAK " + kakaoRestApiKey);
+      JsonNode root = restTemplate.exchange(
+          java.net.URI.create(url), HttpMethod.GET, new HttpEntity<>(null, headers), JsonNode.class
+      ).getBody();
+      if (root == null) return null;
+      JsonNode first = root.path("documents").get(0);
+      if (first == null) return null;
+      String official = first.path("region_1depth_name").asText("");
+      if (official.isBlank()) return null;
+      return OFFICIAL_TO_SHORT_REGION_NAME.getOrDefault(official, official);
+    } catch (Exception e) {
+      log.warn("좌표 역지오코딩 실패 (lat={}, lon={})", lat, lon, e);
+      return null;
+    }
   }
 
   // 큐레이션 탭 "내 주변만 보기" 토글용 - findNearestPlaces는 카테고리 필터를 지원하지 않아서, 필터링
@@ -151,6 +302,9 @@ public class PlaceController {
       @RequestParam double lon,
       @RequestParam(required = false) String category,
       @RequestParam(required = false) String subCategory,
+      @RequestParam(required = false) String region,
+      @RequestParam(required = false) String district,
+      @RequestParam(required = false) String keyword,
       @RequestParam(defaultValue = "30") int limit) {
     int pool = Math.max(limit * 20, 500);
     List<Place> candidates = placeRepository.findNearestPlaces(lat, lon, pool);
@@ -159,10 +313,18 @@ public class PlaceController {
         ? null
         : List.of(category.split(","));
 
+    List<String> regionKeywords = (region == null || region.isBlank()) ? null : expandRegion(region);
+
     List<Place> filtered = candidates.stream()
         .filter(place -> categories == null || categories.contains(place.getCategory()))
         .filter(place -> subCategory == null || subCategory.isBlank()
             || (place.getPlaceCategory() != null && subCategory.equals(place.getPlaceCategory().getSubCategory())))
+        .filter(place -> regionKeywords == null
+            || (place.getAddress() != null && regionKeywords.stream().anyMatch(place.getAddress()::contains)))
+        .filter(place -> district == null || district.isBlank()
+            || (place.getAddress() != null && place.getAddress().contains(district)))
+        .filter(place -> keyword == null || keyword.isBlank()
+            || (place.getName() != null && place.getName().contains(keyword)))
         .limit(limit)
         .toList();
 
@@ -175,12 +337,20 @@ public class PlaceController {
             Collectors.mapping(PlaceAmenity::getAmenityTag, Collectors.toList())
         ));
 
+    Map<Long, PerformanceRanking> rankingByPlaceId = performanceRankingRepository.findByPlace_IdIn(placeIds).stream()
+        .collect(Collectors.toMap(r -> r.getPlace().getId(), r -> r));
+
+    Map<Long, PlaceStyle> styleByPlaceId = placeStyleRepository.findByPlace_IdIn(placeIds).stream()
+        .collect(Collectors.toMap(s -> s.getPlace().getId(), s -> s));
+
     List<CurationPlaceDto> result = filtered.stream()
         .map(place -> CurationPlaceDto.from(
             place,
             place.getPlaceCategory(),
             realityByPlaceId.get(place.getId()),
-            amenitiesByPlaceId.getOrDefault(place.getId(), List.of())
+            amenitiesByPlaceId.getOrDefault(place.getId(), List.of()),
+            rankingByPlaceId.get(place.getId()),
+            styleByPlaceId.get(place.getId())
         ))
         .toList();
     return ResponseEntity.ok(result);
@@ -188,10 +358,26 @@ public class PlaceController {
 
   // 큐레이션 탭 카테고리 칩에 개수를 표시하기 위한 공개 API. 카테고리별로 매번 목록을 다 가져와
   // 세는 건 비효율적이라 DB에서 GROUP BY로 바로 집계한다(AdminController의 같은 패턴 재사용).
+  // region이 있으면 그 지역 안에서만 집계한다(2026-08-19) - 없으면 예전처럼 전국 집계.
   @GetMapping("/category-counts")
-  public ResponseEntity<Map<String, Long>> getCategoryCounts() {
+  public ResponseEntity<Map<String, Long>> getCategoryCounts(
+      @RequestParam(required = false) String region, @RequestParam(required = false) String district) {
+    boolean hasRegion = region != null && !region.isBlank();
+    String districtFilter = (district == null || district.isBlank()) ? null : district;
+    List<Object[]> rows;
+    if (hasRegion) {
+      List<String> regionKeywords = expandRegion(region);
+      rows = placeRepository.countGroupedByCategoryAndAddressContaining(
+          regionKeywords.get(0),
+          regionKeywords.size() > 1 ? regionKeywords.get(1) : null,
+          regionKeywords.size() > 2 ? regionKeywords.get(2) : null,
+          districtFilter);
+    } else {
+      rows = placeRepository.countGroupedByCategory();
+    }
+
     Map<String, Long> counts = new java.util.LinkedHashMap<>();
-    for (Object[] row : placeRepository.countGroupedByCategory()) {
+    for (Object[] row : rows) {
       counts.put((String) row[0], (Long) row[1]);
     }
     return ResponseEntity.ok(counts);
@@ -199,9 +385,26 @@ public class PlaceController {
 
   // 숙박 탭처럼 대분류 하나를 세부분류 칩으로 한 번 더 쪼개서 보여줄 때 쓰는 개수 집계 API.
   @GetMapping("/category-counts/sub")
-  public ResponseEntity<Map<String, Long>> getSubCategoryCounts(@RequestParam String category) {
+  public ResponseEntity<Map<String, Long>> getSubCategoryCounts(
+      @RequestParam String category, @RequestParam(required = false) String region,
+      @RequestParam(required = false) String district) {
+    boolean hasRegion = region != null && !region.isBlank();
+    String districtFilter = (district == null || district.isBlank()) ? null : district;
+    List<Object[]> rows;
+    if (hasRegion) {
+      List<String> regionKeywords = expandRegion(region);
+      rows = placeRepository.countGroupedBySubCategoryAndAddressContaining(
+          category,
+          regionKeywords.get(0),
+          regionKeywords.size() > 1 ? regionKeywords.get(1) : null,
+          regionKeywords.size() > 2 ? regionKeywords.get(2) : null,
+          districtFilter);
+    } else {
+      rows = placeRepository.countGroupedBySubCategory(category);
+    }
+
     Map<String, Long> counts = new java.util.LinkedHashMap<>();
-    for (Object[] row : placeRepository.countGroupedBySubCategory(category)) {
+    for (Object[] row : rows) {
       counts.put((String) row[0], (Long) row[1]);
     }
     return ResponseEntity.ok(counts);

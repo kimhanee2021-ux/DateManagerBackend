@@ -22,14 +22,79 @@ public interface PlaceRepository extends JpaRepository<Place, Long> {
   // 큐레이션/코스빌더에서 카테고리(맛집, 숙박 등)별로 장소를 페이지 단위 조회할 때 사용.
   Page<Place> findByCategory(String category, Pageable pageable);
 
-  // "공연" 칩처럼 실제로는 여러 category 값(KOPIS 장르명: 연극/뮤지컬/서양음악(클래식) 등)을 한 번에
-  // 묶어서 보여줘야 하는 경우용 - PlaceSyncService가 공연은 "공연"이 아니라 genrenm(장르명) 그대로를
-  // category에 저장하기 때문에 필요하다 (2026-08-14, 큐레이션 탭 실데이터 연동 중 발견).
-  Page<Place> findByCategoryIn(List<String> categories, Pageable pageable);
+  // 큐레이션 탭(데이트/숙박) 조회용 - 카테고리/세부분류/지역/이름검색을 전부 선택적으로 조합한다.
+  // 카테고리가 있을 때(있어야만 하는) 버전과 없을 때 버전 2개로 나눴다 - "category IN :list"에
+  // 빈 리스트를 넘기면 Hibernate가 예외를 던지기 때문에, 카테고리 자체가 없는 경우까지 억지로
+  // 한 쿼리에 합치지 않았다.
+  //
+  // r1/r2/r3인 이유: 충북/충남→대전, 경북/경남→대구로 지역을 통합하면서(2026-08-19), "대전" 하나를
+  // 골라도 "대전"·"충청북도"·"충청남도" 세 키워드 중 하나라도 주소에 포함되면 매치돼야 한다. JPQL은
+  // LIKE ANY(list) 같은 문법이 없어서, 최대 3개까지 필요한 이 프로젝트 특성상 파라미터 3개를 두고
+  // 안 쓰는 자리는 null로 넘겨 건너뛰는 방식을 택했다(PlaceController.expandRegion 참고).
+  // subCategory/keyword/district가 "필터 없음"일 때는 파라미터 자체를 null로 넘기고 "IS NULL OR" 로
+  // 건너뛰지만, region(r1)은 항상 값이 있어야 하는 자리라 컨트롤러가 필터 없을 땐 빈 문자열("")을
+  // 넘긴다 - address LIKE '%%'는 모든 행에 걸리므로 "지역 필터 없음"과 같은 효과를 낸다.
+  // district는 구/시 세부 필터용(예: "중구")인데, "중구"/"동구"/"고성군" 같은 이름은 서울·부산·대구·
+  // 대전·울산·강원·경남 등 여러 시/도가 똑같이 쓰고 있어서 district 하나만으로 address를 검색하면
+  // 완전히 다른 지역이 섞여 들어온다(2026-08-19 발견). 그래서 district는 항상 region(r1/r2/r3)과
+  // AND로 같이 걸어서, "이 시/도 범위 안에서 + 이 구/시 이름"을 동시에 만족해야만 매치되게 한다.
+  // LEFT JOIN인 이유(중요): "p.placeCategory.subCategory"처럼 경로를 그냥 따라가면 JPQL이 파라미터
+  // 값과 무관하게 항상 INNER JOIN으로 컴파일해버려서, place_category_id가 NULL인 장소(세부분류가
+  // 아직 안 붙은 장소)가 subCategory로 필터링을 안 하는 경우에도 통째로 결과에서 빠져버린다
+  // (2026-08-19 발견 - 부산 "문화시설" 803건이 전부 place_category_id NULL이라 목록이 텅 비었었음).
+  // LEFT JOIN + pc.subCategory로 바꾸면 연결이 없는 장소도 일단 후보에 남고, subCategory를 실제로
+  // 지정했을 때만 그 값과 비교해서 걸러진다.
+  // energyTarget(에너지 게이지, 2026-08-20): 유저가 큐레이션 탭에서 직접 조정하는 "지금 원하는
+  // 활력 정도"(0~100) - 아직 온보딩 성향값 저장 파이프라인이 없어서(팀원 담당, 진행 전) 저장된
+  // 유저 성향으로 자동 매칭을 할 수 없는 동안의 임시 대안이다. null이면 CASE가 모든 행에 0을 줘서
+  // 사실상 무시되고 기존 id DESC 정렬만 적용되며, 값이 있으면 "장소의 에너지 점수가 게이지 값과
+  // 가까운 순"으로 정렬한다.
+  // excludeOutdoor/indoorBoost(날씨 기반 실내외, 2026-08-20): 비가 오면(excludeOutdoor=true)
+  // 실외 장소(isIndoor=0)는 결과에서 아예 뺀다(하드 필터) - 어차피 못 갈 곳이라서. 폭염/한파일 때는
+  // (indoorBoost=true) 빼지는 않고 실내 장소를 정렬 우선순위로 앞에 둔다(소프트 부스트) - 극단
+  // 날씨에도 야외 장소를 원할 수는 있으니 아예 안 보여주는 건 과함(2026-08-20 사용자 결정, 에너지
+  // 게이지와 같은 "필터보다는 정렬" 원칙). 둘 다 false/null로 넘기면 아무 효과 없음(기존 동작 그대로).
+  // scoreEnergy/isIndoor가 없는 장소(placeCategory 미연결)는 중립값(50)/실내(1) 기준으로 계산한다
+  // (COALESCE) - 정렬 밖으로 밀려나지 않고 "보통"으로 취급됨.
+  // p.startDate ASC(2026-08-20): 공연/스포츠처럼 특정 날짜에만 열리는 장소는 데이터 생성순(id desc)이
+  // 아니라 "곧 열리는 순"으로 보여야 실제로 갈 수 있는 것부터 보인다(사용자가 스포츠 카테고리에서
+  // 실제로 발견함). startDate가 없는 장소(대부분의 카테고리)는 전부 null이라 서로 순위가 안 갈리고
+  // 뒤의 정렬 기준으로 넘어가므로, 날짜가 있는 카테고리에만 자연스럽게 효과가 있다(오라클은 ASC에서
+  // NULL을 가장 뒤로 보내는 게 기본 동작이라 별도 NULLS LAST 지정이 필요 없음).
+  @Query("SELECT p FROM Place p LEFT JOIN p.placeCategory pc WHERE p.category IN :categories "
+      + "AND (:subCategory IS NULL OR pc.subCategory = :subCategory) AND "
+      + "(p.address LIKE CONCAT('%', :r1, '%') "
+      + "OR (:r2 IS NOT NULL AND p.address LIKE CONCAT('%', :r2, '%')) "
+      + "OR (:r3 IS NOT NULL AND p.address LIKE CONCAT('%', :r3, '%'))) "
+      + "AND (:district IS NULL OR p.address LIKE CONCAT('%', :district, '%')) "
+      + "AND (:keyword IS NULL OR p.name LIKE CONCAT('%', :keyword, '%')) "
+      + "AND (:excludeOutdoor = false OR COALESCE(pc.isIndoor, 1) = 1) "
+      + "ORDER BY "
+      + "CASE WHEN :indoorBoost = false THEN 0 ELSE (1 - COALESCE(pc.isIndoor, 1)) END ASC, "
+      + "p.startDate ASC, "
+      + "CASE WHEN :energyTarget IS NULL THEN 0 "
+      + "ELSE ABS(COALESCE(pc.scoreEnergy, 50) - :energyTarget) END ASC")
+  Page<Place> searchByCategoryIn(
+      List<String> categories, String subCategory, String r1, String r2, String r3, String district,
+      String keyword, boolean excludeOutdoor, boolean indoorBoost, Integer energyTarget, Pageable pageable);
 
-  // 숙박 탭처럼 대분류 안에서 세부분류(placeCategory.subCategory)로 한 번 더 좁혀야 하는 경우용
-  // (2026-08-14, 숙박 카테고리 칩 복원하면서 추가).
-  Page<Place> findByCategoryAndPlaceCategory_SubCategory(String category, String subCategory, Pageable pageable);
+  // 카테고리 칩을 아예 안 고른(=전체) 경우. 위 searchByCategoryIn과 지역/구시/키워드/날씨/에너지게이지
+  // 조건은 동일하다.
+  @Query("SELECT p FROM Place p LEFT JOIN p.placeCategory pc WHERE "
+      + "(p.address LIKE CONCAT('%', :r1, '%') "
+      + "OR (:r2 IS NOT NULL AND p.address LIKE CONCAT('%', :r2, '%')) "
+      + "OR (:r3 IS NOT NULL AND p.address LIKE CONCAT('%', :r3, '%'))) "
+      + "AND (:district IS NULL OR p.address LIKE CONCAT('%', :district, '%')) "
+      + "AND (:keyword IS NULL OR p.name LIKE CONCAT('%', :keyword, '%')) "
+      + "AND (:excludeOutdoor = false OR COALESCE(pc.isIndoor, 1) = 1) "
+      + "ORDER BY "
+      + "CASE WHEN :indoorBoost = false THEN 0 ELSE (1 - COALESCE(pc.isIndoor, 1)) END ASC, "
+      + "p.startDate ASC, "
+      + "CASE WHEN :energyTarget IS NULL THEN 0 "
+      + "ELSE ABS(COALESCE(pc.scoreEnergy, 50) - :energyTarget) END ASC")
+  Page<Place> searchAll(
+      String r1, String r2, String r3, String district, String keyword,
+      boolean excludeOutdoor, boolean indoorBoost, Integer energyTarget, Pageable pageable);
 
   // 숙박 탭 카테고리 칩에 "OO곳" 개수를 보여주기 위한 대분류 안 세부분류별 집계.
   // 세부분류가 아직 안 붙은(placeCategory가 null인) 장소는 이 결과에 안 잡힌다.
@@ -37,6 +102,26 @@ public interface PlaceRepository extends JpaRepository<Place, Long> {
       + "WHERE p.category = :category AND p.placeCategory IS NOT NULL "
       + "GROUP BY p.placeCategory.subCategory")
   List<Object[]> countGroupedBySubCategory(String category);
+
+  // 위와 같은 집계인데 지역까지 같이 좁힐 때 쓴다(2026-08-19, category-counts와 같은 이유).
+  // r1/r2/r3/district는 위 searchByCategoryIn과 같은 이유(지역 통합 + 구시 중복이름 대응).
+  @Query("SELECT p.placeCategory.subCategory, COUNT(p) FROM Place p "
+      + "WHERE p.category = :category AND p.placeCategory IS NOT NULL "
+      + "AND (p.address LIKE CONCAT('%', :r1, '%') "
+      + "OR (:r2 IS NOT NULL AND p.address LIKE CONCAT('%', :r2, '%')) "
+      + "OR (:r3 IS NOT NULL AND p.address LIKE CONCAT('%', :r3, '%'))) "
+      + "AND (:district IS NULL OR p.address LIKE CONCAT('%', :district, '%')) "
+      + "GROUP BY p.placeCategory.subCategory")
+  List<Object[]> countGroupedBySubCategoryAndAddressContaining(
+      String category, String r1, String r2, String r3, String district);
+
+  // 홈탭 "내 주변"에서 스포츠처럼 희소한 카테고리용(2026-08-20) - findNearestPlaces(좌표 최근접 N개
+  // 풀링 후 카테고리로 거르는 방식)은 전국에 몇십~몇백 곳뿐인 카테고리엔 안 맞는다. 흔한 카테고리
+  // (맛집 등) 수천~수만 건이 이미 최근접 풀을 다 채워버려서, 정작 몇 km만 더 가면 있는 경기장이
+  // 풀에 아예 안 들어가 결과가 0건이 되는 문제가 있었다(PlaceController.listNearbyPlaces 참고). 그래서
+  // 좌표 거리 대신 "같은 시/도"(카카오 좌표->행정구역 API로 역지오코딩) 기준으로 찾고, 어차피 날짜가
+  // 있는 카테고리라 startDate 오름차순(곧 열리는 순)으로 정렬한다.
+  List<Place> findByCategoryAndAddressContainingOrderByStartDateAsc(String category, String addressKeyword);
 
   // 이름에 특정 키워드가 포함된 장소를 찾는다 - 프랜차이즈/체인점 블랙리스트 정리용
   // (TourApiSyncService.cleanupBlacklistedPlaces() 참고).
@@ -50,6 +135,17 @@ public interface PlaceRepository extends JpaRepository<Place, Long> {
   // 하드코딩하지 않고 실제 저장된 값을 그대로 집계한다. 결과의 각 Object[]는 [category, count].
   @Query("SELECT p.category, COUNT(p) FROM Place p GROUP BY p.category ORDER BY COUNT(p) DESC")
   List<Object[]> countGroupedByCategory();
+
+  // 큐레이션 탭 카테고리 칩의 "N곳" 표시가 지역 필터랑 무관하게 항상 전국 건수만 보여주고 있던 문제
+  // 수정용(2026-08-19, 사용자가 실제 화면에서 발견) - region이 있으면 그 지역 안에서만 집계한다.
+  // r1/r2/r3/district는 위 searchByCategoryIn과 같은 이유(지역 통합 + 구시 중복이름 대응).
+  @Query("SELECT p.category, COUNT(p) FROM Place p WHERE "
+      + "(p.address LIKE CONCAT('%', :r1, '%') "
+      + "OR (:r2 IS NOT NULL AND p.address LIKE CONCAT('%', :r2, '%')) "
+      + "OR (:r3 IS NOT NULL AND p.address LIKE CONCAT('%', :r3, '%'))) "
+      + "AND (:district IS NULL OR p.address LIKE CONCAT('%', :district, '%')) "
+      + "GROUP BY p.category ORDER BY COUNT(p) DESC")
+  List<Object[]> countGroupedByCategoryAndAddressContaining(String r1, String r2, String r3, String district);
 
   // 전체 장소 백업(CSV export, AdminController)용 - place_category를 LEFT JOIN 페치해서 한 번의
   // 쿼리로 다 가져온다. 엔티티로 84,000여건을 로드하면서 placeCategory를 건마다 지연 로딩하면
