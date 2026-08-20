@@ -71,15 +71,23 @@ public class AiChatServiceImpl implements AiChatService {
   private static final DateTimeFormatter NOW_FORMAT =
       DateTimeFormatter.ofPattern("yyyy년 M월 d일 EEEE a h시 mm분", Locale.KOREAN);
 
-  // 상담사 캐릭터를 잡아주는 고정 system 프롬프트. 컨텍스트 메시지(현재 시각/날씨)와는 역할이 달라서
+  // 페르소나를 잡아주는 고정 system 프롬프트. 컨텍스트 메시지(현재 시각/날씨)와는 역할이 달라서
   // 따로 둔다 - 이건 세션이 바뀌어도 항상 똑같은 "역할 설정"이고, 컨텍스트는 요청마다 바뀌는 "상황 정보".
+  //
+  // 2026-08-20 사용자 지시로 "데이트 코치/상담사" 톤에서 "실제 애인과 대화하는 느낌"으로 전환함
+  // (project-date-manager-aichat-persona-and-style-matching 메모리 참고). 장소 추천은 지금은
+  // search_nearby_places 도구가 준 후보 목록 안에서만 고르는 방식이지만, 유저 성향값(온보딩 파이프라인,
+  // 팀원 담당)과 장소 성향값(PlaceStyle 5축, 빅데이터 분석으로 채울 예정, 아직 미착수)이 둘 다
+  // 준비되면 "네 취향엔 이런 곳이 잘 맞을 것 같아" 식으로 성향 매칭 근거를 들어 추천하는 방향으로
+  // 갈 것 - 지금은 그 데이터가 없어서 단순 근접 추천에 머무른다.
   private static final String PERSONA_SYSTEM_PROMPT = """
-      너는 데이트 코스를 추천해주는 친근한 데이트 코치 '데이트매니저'야. 커플이나 소개팅을 준비하는
-      사용자에게 상황에 맞는 데이트 장소·코스를 추천하고, 데이트 관련 고민(선물, 대화 주제, 갈등 등)에
-      공감하며 실용적인 조언을 해줘.
-      - 딱딱한 존댓말 말고 친근하고 다정한 존댓말을 써.
+      너는 사용자와 연인처럼 다정하게 대화하는 데이트 앱 AI '데이트매니저'야. 상담사나 코치처럼 조언을
+      늘어놓는 게 아니라, 실제 남자친구·여자친구랑 대화하는 것처럼 친밀하고 다정한 말투로 데이트
+      장소·코스를 추천하고 데이트 관련 고민(선물, 대화 주제, 갈등 등)을 들어줘.
+      - 격식 있는 존댓말 대신, 애인 사이처럼 편안하고 다정한 반말 위주 말투를 써. 딱딱하게 정보만
+        나열하지 말고 챙겨주는 느낌으로 말해.
       - 답변은 3~4문장 이내로 짧고 구체적으로 해.
-      - 데이트·연애와 관련 없는 질문(코딩, 시사, 숙제 등)에는 정중히 거절하고 데이트 상담으로 화제를 돌려줘.
+      - 데이트·연애와 관련 없는 질문(코딩, 시사, 숙제 등)에는 다정하게 거절하고 데이트 얘기로 화제를 돌려줘.
       - 확실하지 않은 정보(구체적인 가게 이름, 실시간 예약 가능 여부 등)는 지어내지 말고 모른다고 말해.
       """;
 
@@ -113,7 +121,9 @@ public class AiChatServiceImpl implements AiChatService {
       Map.entry("액티비티", List.of("액티비티")),
       Map.entry("쇼핑", List.of("쇼핑")),
       Map.entry("축제", List.of("축제")),
-      Map.entry("숙박", List.of("숙박"))
+      Map.entry("숙박", List.of("숙박")),
+      // 2026-08-20 신규 - SportsSyncService가 채워 넣는 국내 프로스포츠 예정 경기(야구/축구, 추후 농구/배구)
+      Map.entry("스포츠", List.of("스포츠"))
   );
 
   // Function Calling(교육자료 function_calling09-3) - AI가 장소 추천이 필요할 때만 스스로 호출하는
@@ -284,14 +294,22 @@ public class AiChatServiceImpl implements AiChatService {
       return "근처에서 조건에 맞는 실제 장소를 못 찾았어. 없다고 솔직히 말하고, 없는 가게 이름을 지어내지 마.";
     }
 
+    // 공연/스포츠처럼 특정 날짜에만 열리는 장소는 날짜를 안 알려주면 AI가 "이미 끝났을 수도 있는"
+    // 곳을 아무 때나 갈 수 있는 것처럼 추천할 위험이 있어서(2026-08-20, 스포츠 카테고리 추가하며
+    // 발견), startDate/showTimeInfo가 있으면 같이 붙여준다.
     String list = nearby.stream()
         .map(p -> "- " + p.getName() + " (" + p.getCategory()
-            + (p.getAddress() != null ? ", " + p.getAddress() : "") + ")")
+            + (p.getAddress() != null ? ", " + p.getAddress() : "")
+            + (p.getStartDate() != null ? ", " + p.getStartDate() : "")
+            + (p.getShowTimeInfo() != null && !p.getShowTimeInfo().isBlank() ? " " + p.getShowTimeInfo() : "")
+            + ")")
         .collect(Collectors.joining("\n"));
 
     return "사용자 근처의 실제 장소 목록이야:\n" + list
         + "\n장소를 구체적으로 추천할 땐 반드시 이 목록 안에 있는 이름만 골라서 말해줘. "
-        + "목록에 어울리는 곳이 없으면 없다고 솔직히 말하고, 목록에 없는 가게 이름을 지어내지 마.";
+        + "목록에 어울리는 곳이 없으면 없다고 솔직히 말하고, 목록에 없는 가게 이름을 지어내지 마. "
+        + "날짜가 붙어 있는 장소(공연, 스포츠 경기 등)는 그 날짜에만 진행되는 거니까, "
+        + "[시스템 제공 정보]로 알려준 오늘 날짜와 비교해서 언제 열리는지도 같이 말해줘.";
   }
 
   /**
@@ -391,9 +409,11 @@ public class AiChatServiceImpl implements AiChatService {
       return new ResponseApiResult(extractText(firstResponse), (String) firstResponse.get("id"));
     }
 
-    // 도구 호출 결과를 모아서 같은 대화(방금 응답의 id)에 이어 보낸다. 교육자료 예시와 같이 이
-    // 두 번째 요청엔 tools/instructions를 다시 안 보낸다 - 도구 실행 결과를 알려주고 마무리 답변만
-    // 받으면 되는 요청이라서다.
+    // 도구 호출 결과를 모아서 같은 대화(방금 응답의 id)에 이어 보낸다. tools는 다시 안 보내도 되지만
+    // (이번 요청에서 또 도구를 부를 필요는 없음), instructions는 previous_response_id로 이어지는
+    // "대화 맥락"과 달리 매 요청마다 새로 안 보내면 그 턴에는 적용이 안 된다(클래스 상단 javadoc
+    // 참고) - 처음엔 이걸 놓쳐서, 정작 장소를 추천하는 답변(도구 호출이 실제로 일어난 턴)에서만
+    // 페르소나 말투가 안 먹히고 딱딱한 문어체로 나오는 문제가 있었다(2026-08-20 발견).
     List<Map<String, Object>> toolOutputs = new ArrayList<>();
     for (Map<?, ?> call : functionCalls) {
       String functionName = (String) call.get("name");
@@ -418,6 +438,7 @@ public class AiChatServiceImpl implements AiChatService {
     Map<String, Object> secondRequest = new LinkedHashMap<>();
     secondRequest.put("model", MODEL);
     secondRequest.put("input", toolOutputs);
+    secondRequest.put("instructions", instructions);
     secondRequest.put("previous_response_id", firstResponse.get("id"));
     Map<?, ?> secondResponse = postToResponsesApi(secondRequest);
 
