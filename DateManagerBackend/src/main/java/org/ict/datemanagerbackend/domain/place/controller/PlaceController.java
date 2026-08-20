@@ -80,13 +80,13 @@ public class PlaceController {
 
   // 홈탭 "내 주변"에서 좌표 최근접 풀링 대신 "같은 시/도" 매칭을 써야 하는 희소 카테고리(2026-08-20).
   // 스포츠는 전국 몇십~몇백 곳뿐이라 최근접 N개 풀에 아예 안 걸리는 문제가 있었음
-  // (PlaceRepository.findByCategoryAndAddressContainingOrderByStartDateAsc 주석 참고). 대형
-  // 콘서트/페스티벌도 같은 문제일 수 있어서 사용자가 확인을 요청했지만, 이 엔드포인트는 category
-  // 파라미터로 "공연"만 받고 장르(서브카테고리)는 구분을 못 해서(공연 칩 자체가 여러 장르값을
-  // 가리킴, PlaceController 상단 주석 참고) 지금 구조로는 "공연 전체"가 아니라 "콘서트/페스티벌만"
-  // 따로 골라 처리할 수가 없다 - 홈탭이 subCategory를 안 넘기기 때문. 그래서 일단 스포츠만 적용하고,
-  // 공연 쪽은 subCategory 파라미터를 이 엔드포인트에 추가하는 별도 작업이 필요함(추후 판단).
+  // (PlaceRepository.findSparseByCategoryAndAddress 주석 참고). "스포츠"는 대분류 자체가 희소해서
+  // 세부분류 구분 없이 항상 이 방식을 쓰고, "공연"은 대분류 전체로는 흔하지만(연극/뮤지컬 등 합쳐
+  // 수천 건) 그중 대형 콘서트·뮤직페스티벌만 떼어보면 똑같이 희소(전국 471건/36건, 2026-08-20 실측)
+  // 하므로 subCategory가 이 두 값 중 하나일 때만 같은 방식을 적용한다.
   private static final Set<String> SPARSE_NEARBY_CATEGORIES = Set.of("스포츠");
+  private static final Set<String> SPARSE_PERFORMANCE_SUBCATEGORIES =
+      Set.of("대형 콘서트(아이돌/스타디움)", "뮤직페스티벌");
 
   public PlaceController(
       PlaceRepository placeRepository,
@@ -218,14 +218,17 @@ public class PlaceController {
       @RequestParam double lat,
       @RequestParam double lon,
       @RequestParam(required = false) String category,
+      @RequestParam(required = false) String subCategory,
       @RequestParam(defaultValue = "300") int limit) {
+    boolean sparsePerformance = "공연".equals(category)
+        && subCategory != null && SPARSE_PERFORMANCE_SUBCATEGORIES.contains(subCategory);
     List<Place> places;
-    if (category != null && SPARSE_NEARBY_CATEGORIES.contains(category)) {
+    if (category != null && (SPARSE_NEARBY_CATEGORIES.contains(category) || sparsePerformance)) {
       String region = reverseGeocodeRegion(lat, lon);
-      log.info("희소 카테고리 내 주변 조회 - category={}, region={}", category, region);
+      log.info("희소 카테고리 내 주변 조회 - category={}, subCategory={}, region={}", category, subCategory, region);
       places = region == null
           ? List.of() // 역지오코딩 실패(카카오 API 오류 등) 시 엉뚱한 전국 결과를 섞어 보여주지 않고 빈 목록
-          : placeRepository.findByCategoryAndAddressContainingOrderByStartDateAsc(category, region).stream()
+          : placeRepository.findSparseByCategoryAndAddress(category, subCategory, region).stream()
               .limit(limit)
               .toList();
       log.info("희소 카테고리 조회 결과 {}건", places.size());

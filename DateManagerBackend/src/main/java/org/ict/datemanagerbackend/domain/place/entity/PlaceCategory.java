@@ -72,6 +72,18 @@ public class PlaceCategory {
   @Column(name = "score_depth", nullable = false)
   private Integer scoreDepth = 50;
 
+  // 즉흥·계획(Pacing) 축(2026-08-20 추가) - 온보딩 설문(PERSONA_AXES)엔 원래부터 있었지만 장소 쪽
+  // 대응 점수가 없어서 매칭에서 빠져있던 축. 웨이팅 유무 등 실제 데이터가 아직 없어 대부분 50(중립)
+  // 으로 시작하고, 세부분류별로 근거가 확실한 것만 예외로 채워나간다.
+  // nullable=false를 안 쓰는 이유: place_categories에 이미 46개 행이 있는 상태에서 ddl-auto가
+  // "ALTER TABLE ... ADD score_pacing NOT NULL"을 시도하면 오라클이 ORA-01758로 거부한다(값이
+  // 없는 기존 행에 NOT NULL을 강제할 수 없음, DEFAULT 절도 안 붙여줌). nullable로 두면 컬럼 추가
+  // 자체는 성공하고, PlaceCategorySeeder가 같은 기동에서 즉시 전부 50으로 채운다.
+  @Setter
+  @Builder.Default
+  @Column(name = "score_pacing")
+  private Integer scorePacing = 50;
+
   @Setter
   @Builder.Default
   @Column(name = "is_indoor", nullable = false)

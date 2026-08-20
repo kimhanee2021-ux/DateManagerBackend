@@ -39,7 +39,8 @@ public record CurationPlaceDto(
     Integer scoreImmersion,
     Integer scoreVibe,
     Integer scoreAesthetic,
-    Integer scoreDepth
+    Integer scoreDepth,
+    Integer scorePacing
 ) {
 
   public static CurationPlaceDto from(
@@ -72,7 +73,8 @@ public record CurationPlaceDto(
         category != null ? category.getScoreImmersion() : (style != null ? style.getScoreImmersion() : null),
         category != null ? category.getScoreVibe() : (style != null ? style.getScoreVibe() : null),
         category != null ? category.getScoreAesthetic() : (style != null ? style.getScoreAesthetic() : null),
-        category != null ? category.getScoreDepth() : (style != null ? style.getScoreDepth() : null)
+        category != null ? category.getScoreDepth() : (style != null ? style.getScoreDepth() : null),
+        category != null ? category.getScorePacing() : (style != null ? style.getScorePacing() : null)
     );
   }
 }

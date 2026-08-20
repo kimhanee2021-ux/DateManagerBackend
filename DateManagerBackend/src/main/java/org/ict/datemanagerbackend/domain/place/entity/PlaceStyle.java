@@ -67,6 +67,13 @@ public class PlaceStyle {
   @Column(name = "score_depth", nullable = false)
   private Integer scoreDepth = 50; // 깊이 성향 점수 (생성 시 중립값 50, 이후 큐레이션 로직이 갱신)
 
+  // nullable=false를 안 쓰는 이유는 PlaceCategory.scorePacing과 동일(기존 행이 있는 테이블에
+  // NOT NULL 컬럼을 ddl-auto로 추가하면 ORA-01758로 실패함).
+  @Setter
+  @Builder.Default
+  @Column(name = "score_pacing")
+  private Integer scorePacing = 50; // 즉흥·계획 성향 점수(2026-08-20 추가, 생성 시 중립값 50)
+
   @Setter
   @Builder.Default
   @Column(name = "is_indoor", nullable = false)

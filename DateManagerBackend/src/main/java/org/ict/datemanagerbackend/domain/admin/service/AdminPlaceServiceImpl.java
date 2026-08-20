@@ -156,7 +156,7 @@ public class AdminPlaceServiceImpl implements AdminPlaceService {
   @Override
   public String exportPlaceCategoriesCsv() {
     StringBuilder csv = new StringBuilder();
-    csv.append("id,parentCategory,subCategory,emoji,scoreEnergy,scoreImmersion,scoreVibe,scoreAesthetic,scoreDepth,isIndoor,isActivity\n");
+    csv.append("id,parentCategory,subCategory,emoji,scoreEnergy,scoreImmersion,scoreVibe,scoreAesthetic,scoreDepth,scorePacing,isIndoor,isActivity\n");
     for (PlaceCategory pc : placeCategoryRepository.findAll()) {
       csv.append(pc.getId()).append(',')
           .append(csvEscape(pc.getParentCategory())).append(',')
@@ -167,6 +167,7 @@ public class AdminPlaceServiceImpl implements AdminPlaceService {
           .append(pc.getScoreVibe()).append(',')
           .append(pc.getScoreAesthetic()).append(',')
           .append(pc.getScoreDepth()).append(',')
+          .append(pc.getScorePacing()).append(',')
           .append(pc.getIsIndoor()).append(',')
           .append(pc.getIsActivity()).append('\n');
     }

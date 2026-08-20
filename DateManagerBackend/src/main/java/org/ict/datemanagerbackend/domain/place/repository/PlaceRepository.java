@@ -130,7 +130,16 @@ public interface PlaceRepository extends JpaRepository<Place, Long> {
   // 풀에 아예 안 들어가 결과가 0건이 되는 문제가 있었다(PlaceController.listNearbyPlaces 참고). 그래서
   // 좌표 거리 대신 "같은 시/도"(카카오 좌표->행정구역 API로 역지오코딩) 기준으로 찾고, 어차피 날짜가
   // 있는 카테고리라 startDate 오름차순(곧 열리는 순)으로 정렬한다.
-  List<Place> findByCategoryAndAddressContainingOrderByStartDateAsc(String category, String addressKeyword);
+  // subCategory(2026-08-20 확장): "공연" 대분류는 전체로 보면 흔하지만(연극/뮤지컬/클래식 등 합쳐
+  // 수천 건), 그중 "대형 콘서트"·"뮤직페스티벌"만 따로 보면 전국 471건/36건뿐이라 똑같이 희소하다
+  // (사용자가 실제로 이 문제를 지적함). null이면(스포츠처럼 세부분류 구분이 필요 없는 카테고리)
+  // 대분류만으로 걸러 기존과 동일하게 동작한다 - LEFT JOIN인 이유는 searchByCategoryIn과 같다
+  // (세부분류 미연결 장소가 subCategory 조건 없을 때 결과에서 안 빠지게).
+  @Query("SELECT p FROM Place p LEFT JOIN p.placeCategory pc WHERE p.category = :category "
+      + "AND (:subCategory IS NULL OR pc.subCategory = :subCategory) "
+      + "AND p.address LIKE CONCAT('%', :addressKeyword, '%') "
+      + "ORDER BY p.startDate ASC")
+  List<Place> findSparseByCategoryAndAddress(String category, String subCategory, String addressKeyword);
 
   // 이름에 특정 키워드가 포함된 장소를 찾는다 - 프랜차이즈/체인점 블랙리스트 정리용
   // (TourApiSyncService.cleanupBlacklistedPlaces() 참고).
