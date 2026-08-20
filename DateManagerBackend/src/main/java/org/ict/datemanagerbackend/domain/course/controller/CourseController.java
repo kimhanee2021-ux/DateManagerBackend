@@ -97,4 +97,45 @@ public class CourseController {
       return ResponseEntity.status(400).body(Map.of("error", e.getMessage()));
     }
   }
+
+  /** DELETE /api/course/groups/{id} - 코스 그룹 통째로 삭제 */
+  @DeleteMapping("/groups/{id}")
+  public ResponseEntity<?> deleteGroup(Authentication authentication, @PathVariable Long id) {
+    User me = currentUser(authentication);
+    if (me == null) return ResponseEntity.status(404).body(Map.of("error", "사용자를 찾을 수 없습니다"));
+    try {
+      courseService.deleteGroup(me, id);
+      return ResponseEntity.noContent().build();
+    } catch (IllegalArgumentException e) {
+      return ResponseEntity.status(404).body(Map.of("error", e.getMessage()));
+    }
+  }
+
+  /** DELETE /api/course/groups/{id}/items/{itemId} - 담긴 장소 하나만 빼기 */
+  @DeleteMapping("/groups/{id}/items/{itemId}")
+  public ResponseEntity<?> removeItem(Authentication authentication, @PathVariable Long id, @PathVariable Long itemId) {
+    User me = currentUser(authentication);
+    if (me == null) return ResponseEntity.status(404).body(Map.of("error", "사용자를 찾을 수 없습니다"));
+    try {
+      return ResponseEntity.ok(courseService.removeItem(me, id, itemId));
+    } catch (IllegalArgumentException e) {
+      return ResponseEntity.status(404).body(Map.of("error", e.getMessage()));
+    }
+  }
+
+  public record MoveItemRequest(String direction) {
+  }
+
+  /** PATCH /api/course/groups/{id}/items/{itemId}/move - 담긴 장소 순서를 한 칸 앞/뒤로("up"/"down") */
+  @PatchMapping("/groups/{id}/items/{itemId}/move")
+  public ResponseEntity<?> moveItem(Authentication authentication, @PathVariable Long id, @PathVariable Long itemId,
+                                     @RequestBody MoveItemRequest request) {
+    User me = currentUser(authentication);
+    if (me == null) return ResponseEntity.status(404).body(Map.of("error", "사용자를 찾을 수 없습니다"));
+    try {
+      return ResponseEntity.ok(courseService.moveItem(me, id, itemId, request.direction()));
+    } catch (IllegalArgumentException e) {
+      return ResponseEntity.status(400).body(Map.of("error", e.getMessage()));
+    }
+  }
 }

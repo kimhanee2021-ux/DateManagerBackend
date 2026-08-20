@@ -18,4 +18,10 @@ public interface CourseService {
   // <<Step 2 자동 연결: 코스의 마지막 장소를 기준으로 20분 이내 + 성향(에너지) 보완 스팟 추천.
   // 추천만 하고 코스에 바로 담지는 않음(담으려면 addItem을 다시 호출)>>
   List<CourseMatchSuggestionDto> autoMatch(User user, Long courseGroupId);
+  // <<코스 그룹 통째로 삭제(담긴 장소까지 전부) - 소유자 아니면 예외>>
+  void deleteGroup(User user, Long courseGroupId);
+  // <<코스에 담긴 장소 하나만 빼기 - 뺀 뒤 남은 장소들의 순서(sequence)를 빈틈없이 다시 매김>>
+  CourseGroupResponseDto removeItem(User user, Long courseGroupId, Long itemId);
+  // <<담긴 장소 순서를 한 칸 앞/뒤로 옮김("up"/"down") - 맨 앞에서 up, 맨 뒤에서 down이면 예외>>
+  CourseGroupResponseDto moveItem(User user, Long courseGroupId, Long itemId, String direction);
 }

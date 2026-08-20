@@ -163,6 +163,87 @@ public class CourseServiceImpl implements CourseService {
   private record SuggestionWithGap(CourseMatchSuggestionDto dto, int complementGap) {
   }
 
+  @Override
+  @Transactional
+  public void deleteGroup(User user, Long courseGroupId) {
+    CourseGroup group = getOwnedGroup(user, courseGroupId);
+    courseItemRepository.deleteByCourseGroup_Id(group.getId()); // FK 위반 방지 - 자식(장소)부터 삭제
+    courseGroupRepository.delete(group);
+  }
+
+  @Override
+  @Transactional
+  public CourseGroupResponseDto removeItem(User user, Long courseGroupId, Long itemId) {
+    CourseGroup group = getOwnedGroup(user, courseGroupId);
+    List<CourseItem> items = courseItemRepository.findByCourseGroup_IdOrderBySequenceAsc(group.getId());
+
+    CourseItem target = items.stream()
+        .filter(item -> item.getId().equals(itemId))
+        .findFirst()
+        .orElseThrow(() -> new IllegalArgumentException("코스에서 해당 장소를 찾을 수 없습니다: " + itemId));
+
+    // flush를 안 하면 Hibernate가 삭제(EntityDeleteAction)보다 아래 갱신(EntityUpdateAction)을 먼저
+    // 실행해버려서, 아직 DB에 남아있는 target의 옛 sequence 자리로 다른 행이 이동하려다
+    // (course_group_id, sequence) 유니크 제약에 걸린다(2026-08-20 실측) - 삭제를 먼저 확정한다.
+    courseItemRepository.delete(target);
+    courseItemRepository.flush();
+
+    // 뺀 자리 뒤의 순서를 한 칸씩 당겨서 빈틈(1,2,4,5 -> 1,2,3,4)을 없앤다. 이미 삭제된 자리로만
+    // 이동하므로 course_items의 (course_group_id, sequence) 유니크 제약과 충돌하지 않는다.
+    for (CourseItem item : items) {
+      if (item.getId().equals(itemId)) continue;
+      if (item.getSequence() > target.getSequence()) {
+        item.setSequence(item.getSequence() - 1);
+        courseItemRepository.save(item);
+      }
+    }
+
+    return CourseGroupResponseDto.from(
+        group, courseItemRepository.findByCourseGroup_IdOrderBySequenceAsc(group.getId()));
+  }
+
+  @Override
+  @Transactional
+  public CourseGroupResponseDto moveItem(User user, Long courseGroupId, Long itemId, String direction) {
+    CourseGroup group = getOwnedGroup(user, courseGroupId);
+    List<CourseItem> items = courseItemRepository.findByCourseGroup_IdOrderBySequenceAsc(group.getId());
+
+    int index = -1;
+    for (int i = 0; i < items.size(); i++) {
+      if (items.get(i).getId().equals(itemId)) {
+        index = i;
+        break;
+      }
+    }
+    if (index < 0) throw new IllegalArgumentException("코스에서 해당 장소를 찾을 수 없습니다: " + itemId);
+    if (!"up".equals(direction) && !"down".equals(direction)) {
+      throw new IllegalArgumentException("direction은 up 또는 down이어야 합니다");
+    }
+
+    int targetIndex = "up".equals(direction) ? index - 1 : index + 1;
+    if (targetIndex < 0 || targetIndex >= items.size()) {
+      throw new IllegalArgumentException("이미 맨 " + ("up".equals(direction) ? "앞" : "뒤") + "이라 더 옮길 수 없습니다");
+    }
+
+    CourseItem current = items.get(index);
+    CourseItem swapWith = items.get(targetIndex);
+
+    // 두 행이 이미 갖고 있는 sequence 값을 그대로 서로에게 주면(예: 2<->3) 같은 트랜잭션 안에서도
+    // Oracle이 (course_group_id, sequence) 유니크 제약을 매 UPDATE문마다 즉시 검사하다가 일시적으로
+    // 값이 겹쳐 위반이 날 수 있다 - 두 값 다 안 쓰는 임시값(-1)을 거쳐 3단계로 나눠 flush한다.
+    int currentSeq = current.getSequence();
+    int swapSeq = swapWith.getSequence();
+    current.setSequence(-1);
+    courseItemRepository.saveAndFlush(current);
+    swapWith.setSequence(currentSeq);
+    courseItemRepository.saveAndFlush(swapWith);
+    current.setSequence(swapSeq);
+    courseItemRepository.saveAndFlush(current);
+
+    return CourseGroupResponseDto.from(
+        group, courseItemRepository.findByCourseGroup_IdOrderBySequenceAsc(group.getId()));
+  }
+
   // CurationPlaceDto와 같은 우선순위(place_category 우선, 없으면 place_styles, 그마저 없으면 중립 50).
   private Integer resolveEnergy(Place place) {
     PlaceCategory category = place.getPlaceCategory();
