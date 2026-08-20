@@ -22,4 +22,6 @@ public interface AdminPlaceService {
   List<PlaceDumpDto> exportFullDump();
   // <<exportFullDump로 받은 데이터를 이름+좌표 또는 외부소스 키로 매칭해 내 DB에 반영. 생성/갱신 건수 반환>>
   Map<String, Integer> importFullDump(List<PlaceDumpDto> dump);
+  // <<TourAPI 출처 장소 좌표를 카카오와 대조해 재검증/교정 - 수십 분 이상 걸려서 백그라운드로 돌리고 바로 반환>>
+  Map<String, String> verifyTourApiCoordinates();
 }

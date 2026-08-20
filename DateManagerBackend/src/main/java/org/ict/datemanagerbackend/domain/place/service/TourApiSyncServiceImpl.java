@@ -203,8 +203,14 @@ public class TourApiSyncServiceImpl implements TourApiSyncService {
           place.setName(p.title());
           place.setCategory(category);
           place.setAddress(address);
-          place.setLatitude(lat);
-          place.setLongitude(lng);
+          // coordinateVerified=true인 장소는 PlaceCoordinateVerificationService가 카카오로 이미
+          // 좌표를 검증/교정해둔 상태다(2026-08-20, "홍원" 좌표 오차 발견 후 도입) - 여기서 TourAPI
+          // 원본 mapx/mapy로 다시 덮어쓰면 매일 새벽 4시마다 교정한 좌표가 원래의 잘못된 값으로
+          // 되돌아가버린다. 검증 전(NULL/false)인 장소만 원본 값을 그대로 반영한다.
+          if (!Boolean.TRUE.equals(place.getCoordinateVerified())) {
+            place.setLatitude(lat);
+            place.setLongitude(lng);
+          }
           place.setImageUrl(image);
           placeRepository.save(place);
           updated++;

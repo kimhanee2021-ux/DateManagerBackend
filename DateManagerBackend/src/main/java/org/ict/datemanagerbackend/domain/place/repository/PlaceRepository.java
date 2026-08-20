@@ -191,6 +191,14 @@ public interface PlaceRepository extends JpaRepository<Place, Long> {
       nativeQuery = true)
   List<Place> findNearestPlaces(double lat, double lon, int limit);
 
+  // PlaceCoordinateVerificationService가 TourAPI 출처 장소를 배치로 재검증할 때 쓴다(2026-08-20,
+  // "홍원" 좌표 오차 발견 후 전체 재검증). coordinateVerified가 NULL인 기존 행까지 다 걸리게
+  // "IS NULL OR = false"로 명시한다 - Oracle은 <> 비교에서 NULL을 매치 안 시켜주는 3치 논리라
+  // derived "...Not(true)" 메서드로는 NULL 행을 못 잡는다.
+  @Query("SELECT p FROM Place p WHERE p.externalSource = :externalSource "
+      + "AND (p.coordinateVerified IS NULL OR p.coordinateVerified = false)")
+  Page<Place> findUnverifiedTourApiPlaces(String externalSource, Pageable pageable);
+
   // 네이버 지역 검색처럼 검색어 기반이라 매 실행마다 결과가 달라질 수 있는 소스는 upsert 대신
   // "이번 실행 전 기존 데이터를 지우고 새로 채우는" 전체 교체 방식을 쓴다 - 폐업한 곳도 자동 정리됨.
   // derived delete 메서드는 대상 엔티티를 조회한 뒤 개별 remove()를 호출하는 방식이라, 호출하는 쪽에
