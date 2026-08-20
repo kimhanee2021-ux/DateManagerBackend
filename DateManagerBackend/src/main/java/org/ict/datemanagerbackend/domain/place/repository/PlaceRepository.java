@@ -54,8 +54,17 @@ public interface PlaceRepository extends JpaRepository<Place, Long> {
   // (indoorBoost=true) 빼지는 않고 실내 장소를 정렬 우선순위로 앞에 둔다(소프트 부스트) - 극단
   // 날씨에도 야외 장소를 원할 수는 있으니 아예 안 보여주는 건 과함(2026-08-20 사용자 결정, 에너지
   // 게이지와 같은 "필터보다는 정렬" 원칙). 둘 다 false/null로 넘기면 아무 효과 없음(기존 동작 그대로).
-  // scoreEnergy/isIndoor가 없는 장소(placeCategory 미연결)는 중립값(50)/실내(1) 기준으로 계산한다
-  // (COALESCE) - 정렬 밖으로 밀려나지 않고 "보통"으로 취급됨.
+  // scoreEnergy가 없는 장소(placeCategory 미연결)는 중립값(50) 기준으로 계산한다(COALESCE) - 정렬
+  // 밖으로 밀려나지 않고 "보통"으로 취급됨.
+  // isIndoor 기본값(2026-08-20 수정): 세부분류(placeCategory) 연결이 안 된 장소는 원래 무조건
+  // "실내(1)"로 간주했는데, 실측해보니 관광지 14,007건 중 93%(13,065건)가 세부분류 미연결 상태라
+  // 비가 와도 대부분의 관광지가 필터에서 안 걸러지는 문제가 있었다(2026-08-20, 실제 비 오는 날
+  // 신촌 좌표로 테스트하다 발견 - 관광지는 필터링됐어야 할 942건만 정확히 걸러지고 나머지는 실내
+  // 취급되어 그대로 남음). 관광지/축제는 세부분류 6개 전부 예외 없이 실외(0)로 매겨져 있어서, 세부
+  // 분류가 안 붙은 장소도 대분류(p.category)가 관광지/축제면 실외로 기본값을 잡는 걸로 바꿨다 -
+  // "고창읍성"·"갯벌" 같은 지역 특화 이름은 끝이 없어서 키워드 목록을 넓히는 대신 이 방식을 택함.
+  // 다른 대분류(맛집/공연/액티비티/쇼핑 등)는 실내외가 섞여 있어서 이런 대분류 단위 기본값이 안전하지
+  // 않아 그대로 실내(1) 기본값을 유지한다.
   // p.startDate ASC(2026-08-20): 공연/스포츠처럼 특정 날짜에만 열리는 장소는 데이터 생성순(id desc)이
   // 아니라 "곧 열리는 순"으로 보여야 실제로 갈 수 있는 것부터 보인다(사용자가 스포츠 카테고리에서
   // 실제로 발견함). startDate가 없는 장소(대부분의 카테고리)는 전부 null이라 서로 순위가 안 갈리고
@@ -68,9 +77,9 @@ public interface PlaceRepository extends JpaRepository<Place, Long> {
       + "OR (:r3 IS NOT NULL AND p.address LIKE CONCAT('%', :r3, '%'))) "
       + "AND (:district IS NULL OR p.address LIKE CONCAT('%', :district, '%')) "
       + "AND (:keyword IS NULL OR p.name LIKE CONCAT('%', :keyword, '%')) "
-      + "AND (:excludeOutdoor = false OR COALESCE(pc.isIndoor, 1) = 1) "
+      + "AND (:excludeOutdoor = false OR COALESCE(pc.isIndoor, CASE WHEN p.category IN ('관광지', '축제') THEN 0 ELSE 1 END) = 1) "
       + "ORDER BY "
-      + "CASE WHEN :indoorBoost = false THEN 0 ELSE (1 - COALESCE(pc.isIndoor, 1)) END ASC, "
+      + "CASE WHEN :indoorBoost = false THEN 0 ELSE (1 - COALESCE(pc.isIndoor, CASE WHEN p.category IN ('관광지', '축제') THEN 0 ELSE 1 END)) END ASC, "
       + "p.startDate ASC, "
       + "CASE WHEN :energyTarget IS NULL THEN 0 "
       + "ELSE ABS(COALESCE(pc.scoreEnergy, 50) - :energyTarget) END ASC")
@@ -86,9 +95,9 @@ public interface PlaceRepository extends JpaRepository<Place, Long> {
       + "OR (:r3 IS NOT NULL AND p.address LIKE CONCAT('%', :r3, '%'))) "
       + "AND (:district IS NULL OR p.address LIKE CONCAT('%', :district, '%')) "
       + "AND (:keyword IS NULL OR p.name LIKE CONCAT('%', :keyword, '%')) "
-      + "AND (:excludeOutdoor = false OR COALESCE(pc.isIndoor, 1) = 1) "
+      + "AND (:excludeOutdoor = false OR COALESCE(pc.isIndoor, CASE WHEN p.category IN ('관광지', '축제') THEN 0 ELSE 1 END) = 1) "
       + "ORDER BY "
-      + "CASE WHEN :indoorBoost = false THEN 0 ELSE (1 - COALESCE(pc.isIndoor, 1)) END ASC, "
+      + "CASE WHEN :indoorBoost = false THEN 0 ELSE (1 - COALESCE(pc.isIndoor, CASE WHEN p.category IN ('관광지', '축제') THEN 0 ELSE 1 END)) END ASC, "
       + "p.startDate ASC, "
       + "CASE WHEN :energyTarget IS NULL THEN 0 "
       + "ELSE ABS(COALESCE(pc.scoreEnergy, 50) - :energyTarget) END ASC")
