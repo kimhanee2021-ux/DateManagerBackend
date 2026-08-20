@@ -2,14 +2,17 @@ package org.ict.datemanagerbackend.domain.admin.controller;
 
 import org.ict.datemanagerbackend.domain.admin.service.AdminAuthService;
 import org.ict.datemanagerbackend.domain.admin.service.AdminPlaceService;
+import org.ict.datemanagerbackend.domain.place.dto.PlaceDumpDto;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.List;
 import java.util.Map;
 
 // 장소 데이터 동기화 트리거/백업(CSV)/현황 조회. AdminController에 같이 있던 걸 분리했다(2026-08-18).
@@ -52,6 +55,16 @@ public class AdminPlaceController {
     return ResponseEntity.ok(adminPlaceService.cleanupBlacklistedPlaces());
   }
 
+  // dedup 반경을 50m -> 200~280m로 넓히기 전에 이미 저장된 중복(같은 이름, 소스마다 좌표가 조금씩
+  // 다른 경우) 정리. 2026-08-20.
+  @PostMapping("/merge-duplicates")
+  public ResponseEntity<?> mergeDuplicatePlaces(Authentication authentication) {
+    if (!adminAuthService.isAdmin(authentication)) {
+      return ResponseEntity.status(403).body(Map.of("error", "관리자만 접근할 수 있습니다"));
+    }
+    return ResponseEntity.ok(adminPlaceService.mergeDuplicatePlaces());
+  }
+
   @GetMapping("/export")
   public ResponseEntity<String> exportPlaces(Authentication authentication) {
     if (!adminAuthService.isAdmin(authentication)) {
@@ -72,6 +85,26 @@ public class AdminPlaceController {
         .header("Content-Type", "text/csv; charset=UTF-8")
         .header("Content-Disposition", "attachment; filename=place_categories_export.csv")
         .body(adminPlaceService.exportPlaceCategoriesCsv());
+  }
+
+  // 팀원 공유용 place 전체 백업(JSON). 이 응답을 그대로 파일로 저장해뒀다가 다른 팀원 DB에
+  // /full-import로 보내면 place_styles/place_realities/place_amenities까지 그대로 재현된다(2026-08-20).
+  @GetMapping("/full-export")
+  public ResponseEntity<?> exportFullDump(Authentication authentication) {
+    if (!adminAuthService.isAdmin(authentication)) {
+      return ResponseEntity.status(403).body(Map.of("error", "관리자만 접근할 수 있습니다"));
+    }
+    return ResponseEntity.ok(adminPlaceService.exportFullDump());
+  }
+
+  // /full-export로 받은 JSON을 그대로 body에 넣어 호출하면 내 DB에 반영된다. 외부 API 키가 하나도
+  // 없어도(KOPIS/카카오/네이버/TourAPI 등) place 데이터를 통째로 받을 수 있는 방법.
+  @PostMapping("/full-import")
+  public ResponseEntity<?> importFullDump(Authentication authentication, @RequestBody List<PlaceDumpDto> dump) {
+    if (!adminAuthService.isAdmin(authentication)) {
+      return ResponseEntity.status(403).body(Map.of("error", "관리자만 접근할 수 있습니다"));
+    }
+    return ResponseEntity.ok(adminPlaceService.importFullDump(dump));
   }
 
   @GetMapping("/sync-status")
