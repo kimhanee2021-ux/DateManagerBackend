@@ -8,4 +8,7 @@ import org.ict.datemanagerbackend.domain.user.dto.SaveOnboardingStyleRequest;
 public interface UserStyleService {
 
   void saveOnboarding(Long userId, SaveOnboardingStyleRequest request);
+
+  // <<저장된 성향값 조회 - 아직 온보딩을 저장한 적 없으면 null>>
+  SaveOnboardingStyleRequest getMyStyle(Long userId);
 }

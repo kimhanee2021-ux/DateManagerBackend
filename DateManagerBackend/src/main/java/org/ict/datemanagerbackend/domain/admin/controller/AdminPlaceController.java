@@ -87,6 +87,17 @@ public class AdminPlaceController {
         .body(adminPlaceService.exportPlaceCategoriesCsv());
   }
 
+  // /categories/export로 받은 CSV를 그대로 body에 넣어 올리면 코드 pull/재시작 없이도 성향점수가
+  // 바로 반영된다(2026-08-20, 팀원 공유용). Content-Type은 text/plain으로 받는다 - 팀원이 curl -d
+  // @file.csv 등으로 바로 올릴 수 있게 하기 위해 multipart 대신 raw body로 받는다.
+  @PostMapping(value = "/categories/import", consumes = "text/plain")
+  public ResponseEntity<?> importPlaceCategories(Authentication authentication, @RequestBody String csv) {
+    if (!adminAuthService.isAdmin(authentication)) {
+      return ResponseEntity.status(403).body(Map.of("error", "관리자만 접근할 수 있습니다"));
+    }
+    return ResponseEntity.ok(adminPlaceService.importPlaceCategoriesCsv(csv));
+  }
+
   // 팀원 공유용 place 전체 백업(JSON). 이 응답을 그대로 파일로 저장해뒀다가 다른 팀원 DB에
   // /full-import로 보내면 place_styles/place_realities/place_amenities까지 그대로 재현된다(2026-08-20).
   @GetMapping("/full-export")

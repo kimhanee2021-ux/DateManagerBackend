@@ -50,6 +50,22 @@ public class UserStyleServiceImpl implements UserStyleService {
     userStyleRepository.save(userStyle);
   }
 
+  // 로그인 시 프론트가 저장된 성향값을 불러와 personaProfile을 채우는 용도(2026-08-20) - 그전까진
+  // 온보딩 화면을 그 자리에서 완료할 때만 메모리에 잠깐 채워지고 새로고침/재로그인하면 사라졌었다.
+  @Override
+  public SaveOnboardingStyleRequest getMyStyle(Long userId) {
+    return userStyleRepository.findById(userId)
+        .map(style -> new SaveOnboardingStyleRequest(
+            style.getInitEnergy(),
+            style.getInitImmersion(),
+            style.getInitVibe(),
+            style.getInitAesthetic(),
+            style.getInitPacing(),
+            style.getInitDepth()
+        ))
+        .orElse(null);
+  }
+
   private void validate(SaveOnboardingStyleRequest request) {
     if (request == null) {
       throw badRequest("온보딩 점수가 필요합니다.");

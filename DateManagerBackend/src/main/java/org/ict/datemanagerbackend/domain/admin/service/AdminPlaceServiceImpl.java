@@ -323,4 +323,111 @@ public class AdminPlaceServiceImpl implements AdminPlaceService {
     }
     return value;
   }
+
+  // place_categories CSV import(2026-08-20) - exportPlaceCategoriesCsv와 완전히 같은 컬럼 순서
+  // (id는 무시). PlaceCategorySeeder와 동일하게 parentCategory+subCategory로 매칭해 upsert한다 -
+  // 팀원이 코드 pull/재시작 없이도 CSV 파일만으로 최신 성향점수를 바로 반영할 수 있게 하려는 용도.
+  // 첫 줄(헤더)은 건너뛴다.
+  @Override
+  public Map<String, Integer> importPlaceCategoriesCsv(String csv) {
+    int created = 0;
+    int updated = 0;
+    int skipped = 0;
+    List<String> lines = csv.lines().toList();
+    for (int i = 1; i < lines.size(); i++) {
+      String line = lines.get(i).strip();
+      if (line.isEmpty()) continue;
+      List<String> cols = parseCsvLine(line);
+      if (cols.size() < 12) {
+        skipped++;
+        continue;
+      }
+
+      String parentCategory = cols.get(1);
+      String subCategory = cols.get(2);
+      String emoji = cols.get(3);
+      Integer energy = parseIntOrNull(cols.get(4));
+      Integer immersion = parseIntOrNull(cols.get(5));
+      Integer vibe = parseIntOrNull(cols.get(6));
+      Integer aesthetic = parseIntOrNull(cols.get(7));
+      Integer depth = parseIntOrNull(cols.get(8));
+      Integer pacing = parseIntOrNull(cols.get(9));
+      Integer isIndoor = parseIntOrNull(cols.get(10));
+      Integer isActivity = parseIntOrNull(cols.get(11));
+
+      PlaceCategory category = placeCategoryRepository
+          .findByParentCategoryAndSubCategory(parentCategory, subCategory)
+          .orElse(null);
+
+      if (category == null) {
+        placeCategoryRepository.save(
+            PlaceCategory.builder()
+                .parentCategory(parentCategory)
+                .subCategory(subCategory)
+                .emoji(emoji)
+                .scoreEnergy(energy)
+                .scoreImmersion(immersion)
+                .scoreVibe(vibe)
+                .scoreAesthetic(aesthetic)
+                .scoreDepth(depth)
+                .scorePacing(pacing)
+                .isIndoor(isIndoor)
+                .isActivity(isActivity)
+                .build()
+        );
+        created++;
+        continue;
+      }
+
+      category.setEmoji(emoji);
+      category.setScoreEnergy(energy);
+      category.setScoreImmersion(immersion);
+      category.setScoreVibe(vibe);
+      category.setScoreAesthetic(aesthetic);
+      category.setScoreDepth(depth);
+      category.setScorePacing(pacing);
+      category.setIsIndoor(isIndoor);
+      category.setIsActivity(isActivity);
+      placeCategoryRepository.save(category);
+      updated++;
+    }
+    return Map.of("created", created, "updated", updated, "skipped", skipped);
+  }
+
+  // 콤마/따옴표가 포함된 필드를 감안한 최소 CSV 파서(csvEscape의 역연산) - 외부 라이브러리 없이
+  // exportPlaceCategoriesCsv 포맷 전용으로만 쓴다.
+  private List<String> parseCsvLine(String line) {
+    List<String> result = new ArrayList<>();
+    StringBuilder cur = new StringBuilder();
+    boolean inQuotes = false;
+    for (int i = 0; i < line.length(); i++) {
+      char c = line.charAt(i);
+      if (inQuotes) {
+        if (c == '"') {
+          if (i + 1 < line.length() && line.charAt(i + 1) == '"') {
+            cur.append('"');
+            i++;
+          } else {
+            inQuotes = false;
+          }
+        } else {
+          cur.append(c);
+        }
+      } else if (c == '"') {
+        inQuotes = true;
+      } else if (c == ',') {
+        result.add(cur.toString());
+        cur.setLength(0);
+      } else {
+        cur.append(c);
+      }
+    }
+    result.add(cur.toString());
+    return result;
+  }
+
+  private Integer parseIntOrNull(String s) {
+    if (s == null || s.isBlank()) return null;
+    return Integer.parseInt(s.trim());
+  }
 }

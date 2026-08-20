@@ -18,6 +18,8 @@ public interface AdminPlaceService {
   String exportPlacesCsv();
   // <<장소 세부분류(성향점수 공식) 전체 백업(CSV 본문)>>
   String exportPlaceCategoriesCsv();
+  // <<exportPlaceCategoriesCsv로 받은 CSV를 parentCategory+subCategory로 매칭해 점수 upsert. 생성/갱신/건너뜀 건수 반환>>
+  Map<String, Integer> importPlaceCategoriesCsv(String csv);
   // <<팀원 공유용 place 전체 백업(성향점수/현실체킹/편의시설 포함, 카테고리 연결은 제외) - JSON>>
   List<PlaceDumpDto> exportFullDump();
   // <<exportFullDump로 받은 데이터를 이름+좌표 또는 외부소스 키로 매칭해 내 DB에 반영. 생성/갱신 건수 반환>>
