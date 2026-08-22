@@ -43,6 +43,8 @@ dependencies {
 
     /* springdoc 라이브러리(REST API 명세서) */
     implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:3.0.3'
+    /* 비밀번호 재설정 메일 발송용 (Gmail SMTP) */
+    implementation 'org.springframework.boot:spring-boot-starter-mail'
     /* 환경 변수 관리용 dotenv-java 라이브러리*/
     implementation 'io.github.cdimascio:dotenv-java:3.0.0'
 

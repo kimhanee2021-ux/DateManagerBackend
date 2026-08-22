@@ -66,8 +66,11 @@ public class UserController {
         return ResponseEntity.ok(toResponse(user));
     }
 
-    // 소셜 로그인으로만 가입해 passwordHash가 없는 계정은 "현재 비밀번호"가 없으므로
-    // 비밀번호 변경이 아니라 신규 설정으로 취급해 currentPassword 검증을 건너뛴다.
+    // 소셜 로그인으로만 가입해 passwordHash가 없는 계정은 비밀번호 변경 자체를 막는다.
+    // (예전엔 currentPassword 검증만 건너뛰고 새 비밀번호 설정은 허용했는데, 그러면 그 순간부터
+    // 구글/카카오/네이버 로그인뿐 아니라 일반 이메일+비밀번호 로그인으로도 들어올 수 있게 되어
+    // "한 계정, 한 인증 방식" 원칙이 깨진다 - 반대 방향은 OAuth2LoginSuccessHandler가 이미
+    // passwordHash != null인 이메일의 소셜 로그인을 막고 있어서, 이쪽만 막으면 원칙이 대칭이 된다.)
     @PutMapping("/password")
     public ResponseEntity<?> changePassword(Authentication authentication, @RequestBody ChangePasswordRequest req) {
         if (req.newPassword() == null || req.newPassword().isBlank()) {
@@ -79,10 +82,11 @@ public class UserController {
             return ResponseEntity.status(404).body(Map.of("error", "사용자를 찾을 수 없습니다"));
         }
         User user = userOpt.get();
-        if (user.getPasswordHash() != null) {
-            if (req.currentPassword() == null || !passwordEncoder.matches(req.currentPassword(), user.getPasswordHash())) {
-                return ResponseEntity.status(401).body(Map.of("error", "현재 비밀번호가 일치하지 않습니다"));
-            }
+        if (user.getPasswordHash() == null) {
+            return ResponseEntity.status(400).body(Map.of("error", "소셜 로그인 계정은 비밀번호를 설정할 수 없어요"));
+        }
+        if (req.currentPassword() == null || !passwordEncoder.matches(req.currentPassword(), user.getPasswordHash())) {
+            return ResponseEntity.status(401).body(Map.of("error", "현재 비밀번호가 일치하지 않습니다"));
         }
         user.setPasswordHash(passwordEncoder.encode(req.newPassword()));
         userRepository.save(user);
@@ -136,6 +140,9 @@ public class UserController {
         res.put("nickname", user.getNickname());
         res.put("gender", user.getGender());
         res.put("profileImageUrl", user.getProfileImageUrl());
+        // 프론트가 "비밀번호 변경" 카드를 보여줄지 말지 판단하는 데 쓴다 - passwordHash 자체는
+        // 절대 응답에 포함하지 않고(보안), 있는지 없는지(boolean)만 내려준다.
+        res.put("hasPassword", user.getPasswordHash() != null);
         return res;
     }
 }
