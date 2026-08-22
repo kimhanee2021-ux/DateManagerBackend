@@ -75,6 +75,8 @@ public class PlaceController {
   private final PerformanceRankingRepository performanceRankingRepository;
   private final WeatherService weatherService;
   private final org.ict.datemanagerbackend.domain.user.service.UserStyleUpdateService userStyleUpdateService;
+  private final org.ict.datemanagerbackend.domain.place.repository.PlaceLikeRepository placeLikeRepository;
+  private final org.ict.datemanagerbackend.domain.user.repository.UserRepository userRepository;
   private final RestTemplate restTemplate = new RestTemplate();
 
   @Value("${kakao.rest-api-key}")
@@ -97,7 +99,9 @@ public class PlaceController {
       PlaceAmenityRepository placeAmenityRepository,
       PerformanceRankingRepository performanceRankingRepository,
       WeatherService weatherService,
-      org.ict.datemanagerbackend.domain.user.service.UserStyleUpdateService userStyleUpdateService) {
+      org.ict.datemanagerbackend.domain.user.service.UserStyleUpdateService userStyleUpdateService,
+      org.ict.datemanagerbackend.domain.place.repository.PlaceLikeRepository placeLikeRepository,
+      org.ict.datemanagerbackend.domain.user.repository.UserRepository userRepository) {
     this.placeRepository = placeRepository;
     this.placeStyleRepository = placeStyleRepository;
     this.placeRealityRepository = placeRealityRepository;
@@ -105,6 +109,8 @@ public class PlaceController {
     this.performanceRankingRepository = performanceRankingRepository;
     this.weatherService = weatherService;
     this.userStyleUpdateService = userStyleUpdateService;
+    this.placeLikeRepository = placeLikeRepository;
+    this.userRepository = userRepository;
   }
 
   // 큐레이션 탭(데이트/숙박 카드)용 조회 API. matchScore는 아직 항상 null - 로그인 유저 성향값을
@@ -437,27 +443,59 @@ public class PlaceController {
     return ResponseEntity.ok(PlaceResponseDto.from(placeOpt.get(), style));
   }
 
-  // 2026-08-22 - 좋아요/코스 담기는 지금 CurationTab.jsx에서 로컬 state로만 처리되고(찜 목록/담기함
-  // 자체를 서버에 저장하는 기능은 아직 범위 밖) 백엔드 호출이 없었다. 그 상태에서도 "이 유저가 이
-  // 장소를 좋아요/담기 했다"는 신호 자체는 UserStyle 실시간 갱신 엔진에 반영돼야 해서, 찜/담기
-  // 목록을 영속화하지 않고 신호만 기록하는 가벼운 엔드포인트 두 개를 추가했다. 껐다 켜졌다 하는
-  // 토글이 아니라 "누른 순간의 의사표현"이라, 프론트에서도 추가할 때만 호출하고 뺄 때는 호출하지
-  // 않는다(연속으로 담았다 뺐다 하며 점수를 왜곡시키지 않기 위함).
+  // 2026-08-22 - 처음엔 찜 목록을 영속화하지 않고 "좋아요 눌렀다"는 신호만 UserStyle 갱신 엔진에
+  // 보내는 가벼운 POST 하나였는데, 그러면 새로고침할 때마다 하트가 다 꺼져서 실제 찜 기능으로는
+  // 못 쓴다는 문제가 있었다. place_likes 테이블에 실제로 저장/삭제하는 진짜 좋아요로 바꿨다 -
+  // 성향값 갱신은 "새로 좋아요를 누른 순간"(이미 좋아요한 걸 또 누르면 무시)에만 트리거되고,
+  // 좋아요를 뺄 때는(DELETE) 트리거하지 않는다(연속으로 켰다 껐다 하며 점수를 왜곡시키지 않기 위함).
+  @GetMapping("/likes")
+  public ResponseEntity<?> getMyLikedPlaceIds(org.springframework.security.core.Authentication authentication) {
+    if (authentication == null) {
+      return ResponseEntity.status(401).body(Map.of("error", "로그인이 필요합니다"));
+    }
+    Long userId = (Long) authentication.getPrincipal();
+    List<Long> placeIds = placeLikeRepository.findByUser_Id(userId).stream()
+        .map(like -> like.getPlace().getId())
+        .toList();
+    return ResponseEntity.ok(placeIds);
+  }
+
   @PostMapping("/{id}/like")
   public ResponseEntity<?> likePlace(@PathVariable Long id, org.springframework.security.core.Authentication authentication) {
     if (authentication == null) {
       return ResponseEntity.status(401).body(Map.of("error", "로그인이 필요합니다"));
     }
-    PlaceStyle style = placeStyleRepository.findByPlace_Id(id).orElse(null);
-    if (style == null) {
+    Long userId = (Long) authentication.getPrincipal();
+    if (placeLikeRepository.existsByUser_IdAndPlace_Id(userId, id)) {
+      return ResponseEntity.ok(Map.of("success", true, "liked", true)); // 이미 좋아요한 상태 - 그대로 성공 처리, 점수는 다시 안 건드림
+    }
+    Optional<Place> placeOpt = placeRepository.findById(id);
+    if (placeOpt.isEmpty()) {
       return ResponseEntity.status(404).body(Map.of("error", "장소를 찾을 수 없습니다"));
     }
-    try {
-      userStyleUpdateService.applyPlaceLike((Long) authentication.getPrincipal(), style);
-    } catch (Exception e) {
-      log.warn("좋아요 기반 성향값 갱신 실패 (placeId={})", id, e);
+    placeLikeRepository.save(org.ict.datemanagerbackend.domain.place.entity.PlaceLike.builder()
+        .user(userRepository.getReferenceById(userId))
+        .place(placeOpt.get())
+        .build());
+    PlaceStyle style = placeStyleRepository.findByPlace_Id(id).orElse(null);
+    if (style != null) {
+      try {
+        userStyleUpdateService.applyPlaceLike(userId, style);
+      } catch (Exception e) {
+        log.warn("좋아요 기반 성향값 갱신 실패 (placeId={})", id, e);
+      }
     }
-    return ResponseEntity.ok(Map.of("success", true));
+    return ResponseEntity.ok(Map.of("success", true, "liked", true));
+  }
+
+  @org.springframework.web.bind.annotation.DeleteMapping("/{id}/like")
+  public ResponseEntity<?> unlikePlace(@PathVariable Long id, org.springframework.security.core.Authentication authentication) {
+    if (authentication == null) {
+      return ResponseEntity.status(401).body(Map.of("error", "로그인이 필요합니다"));
+    }
+    Long userId = (Long) authentication.getPrincipal();
+    placeLikeRepository.findByUser_IdAndPlace_Id(userId, id).ifPresent(placeLikeRepository::delete);
+    return ResponseEntity.ok(Map.of("success", true, "liked", false));
   }
 
   @PostMapping("/{id}/course-add")
