@@ -39,7 +39,8 @@ public record PlaceResponseDto(
     Integer isOpenRun,
     String performanceState,
     Integer boxOfficeRank,
-    String genreName
+    String genreName,
+    String emoji
 ) {
 
   public static PlaceResponseDto from(Place place, PlaceStyle style) {
@@ -74,7 +75,10 @@ public record PlaceResponseDto(
         place.getIsOpenRun(),
         place.getPerformanceState(),
         ranking != null ? ranking.getRankNo() : null,
-        ranking != null ? ranking.getGenreName() : null
+        ranking != null ? ranking.getGenreName() : null,
+        // 이미지 없는 카드의 대체 아이콘용(2026-08-22, HomeTab 카드 개선) - 세부분류 이모지가
+        // 있으면 그걸, 없으면 null(프론트가 기본 📍로 폴백).
+        category != null ? category.getEmoji() : null
     );
   }
 }

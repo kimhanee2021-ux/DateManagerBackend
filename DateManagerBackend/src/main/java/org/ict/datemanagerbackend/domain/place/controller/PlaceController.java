@@ -11,6 +11,7 @@ import org.ict.datemanagerbackend.domain.place.entity.PlaceReality;
 import org.ict.datemanagerbackend.domain.place.entity.PlaceStyle;
 import org.ict.datemanagerbackend.domain.place.repository.PerformanceRankingRepository;
 import org.ict.datemanagerbackend.domain.place.repository.PlaceAmenityRepository;
+import org.ict.datemanagerbackend.domain.place.repository.PlaceCategoryRepository;
 import org.ict.datemanagerbackend.domain.place.repository.PlaceRealityRepository;
 import org.ict.datemanagerbackend.domain.place.repository.PlaceRepository;
 import org.ict.datemanagerbackend.domain.place.repository.PlaceStyleRepository;
@@ -77,6 +78,7 @@ public class PlaceController {
   private final org.ict.datemanagerbackend.domain.user.service.UserStyleUpdateService userStyleUpdateService;
   private final org.ict.datemanagerbackend.domain.place.repository.PlaceLikeRepository placeLikeRepository;
   private final org.ict.datemanagerbackend.domain.user.repository.UserRepository userRepository;
+  private final PlaceCategoryRepository placeCategoryRepository;
   private final RestTemplate restTemplate = new RestTemplate();
 
   @Value("${kakao.rest-api-key}")
@@ -101,7 +103,8 @@ public class PlaceController {
       WeatherService weatherService,
       org.ict.datemanagerbackend.domain.user.service.UserStyleUpdateService userStyleUpdateService,
       org.ict.datemanagerbackend.domain.place.repository.PlaceLikeRepository placeLikeRepository,
-      org.ict.datemanagerbackend.domain.user.repository.UserRepository userRepository) {
+      org.ict.datemanagerbackend.domain.user.repository.UserRepository userRepository,
+      PlaceCategoryRepository placeCategoryRepository) {
     this.placeRepository = placeRepository;
     this.placeStyleRepository = placeStyleRepository;
     this.placeRealityRepository = placeRealityRepository;
@@ -111,6 +114,7 @@ public class PlaceController {
     this.userStyleUpdateService = userStyleUpdateService;
     this.placeLikeRepository = placeLikeRepository;
     this.userRepository = userRepository;
+    this.placeCategoryRepository = placeCategoryRepository;
   }
 
   // 큐레이션 탭(데이트/숙박 카드)용 조회 API. matchScore는 아직 항상 null - 로그인 유저 성향값을
@@ -421,6 +425,19 @@ public class PlaceController {
       counts.put((String) row[0], (Long) row[1]);
     }
     return ResponseEntity.ok(counts);
+  }
+
+  // 대분류 하나의 세부분류 목록(이름+이모지)을 그대로 내려준다(2026-08-22) - 맛집처럼 세부칩 UI를
+  // 만들 때, 프론트가 세부분류 목록을 하드코딩해서 들고 있으면(RESTAURANT_SUBCATEGORIES처럼) DB에
+  // 세부분류가 추가/변경될 때마다 프론트도 같이 고쳐야 하는 문제가 있었다(실제로 맛집 세부칩을
+  // 4개만 하드코딩했다가 실제로는 14개였던 걸 뒤늦게 발견함). 이 API로 프론트가 항상 최신
+  // place_categories 그대로를 받아 칩을 그리게 하면 그런 어긋남 자체가 안 생긴다.
+  @GetMapping("/categories")
+  public ResponseEntity<List<Map<String, String>>> listSubCategories(@RequestParam String parent) {
+    List<Map<String, String>> result = placeCategoryRepository.findByParentCategory(parent).stream()
+        .map(pc -> Map.of("subCategory", pc.getSubCategory(), "emoji", pc.getEmoji() != null ? pc.getEmoji() : ""))
+        .toList();
+    return ResponseEntity.ok(result);
   }
 
   @GetMapping("/{id}")
