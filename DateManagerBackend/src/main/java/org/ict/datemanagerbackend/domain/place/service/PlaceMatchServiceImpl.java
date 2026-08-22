@@ -106,7 +106,9 @@ public class PlaceMatchServiceImpl implements PlaceMatchService {
     );
   }
 
-  private int orNeutral(Integer value) {
-    return value != null ? value : 50;
+  // 2026-08-22 - UserStyle 내부 저장값이 실시간 갱신 엔진 때문에 Double로 바뀌어서, 여기선
+  // 반올림해서 정수로 받는다.
+  private int orNeutral(Double value) {
+    return value != null ? (int) Math.round(value) : 50;
   }
 }

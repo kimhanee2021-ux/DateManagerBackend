@@ -61,12 +61,14 @@ class UserStyleServiceTest {
     verify(userStyleRepository).save(captor.capture());
     UserStyle saved = captor.getValue();
 
-    assertEquals(70, saved.getInitEnergy());
-    assertEquals(30, saved.getInitImmersion());
-    assertEquals(50, saved.getInitVibe());
-    assertEquals(70, saved.getInitAesthetic());
-    assertEquals(30, saved.getInitPacing());
-    assertEquals(50, saved.getInitDepth());
+    // 2026-08-22 - UserStyle 내부 저장값이 실시간 갱신 엔진 때문에 Double로 바뀌어서 기대값도
+    // double로 맞춤(값 자체는 그대로 70/30/50 등, 타입만 변경).
+    assertEquals(70.0, saved.getInitEnergy());
+    assertEquals(30.0, saved.getInitImmersion());
+    assertEquals(50.0, saved.getInitVibe());
+    assertEquals(70.0, saved.getInitAesthetic());
+    assertEquals(30.0, saved.getInitPacing());
+    assertEquals(50.0, saved.getInitDepth());
   }
 
   @Test

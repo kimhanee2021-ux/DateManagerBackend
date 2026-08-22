@@ -146,13 +146,21 @@ public class AiChatServiceImpl implements AiChatService {
     UserStyle style = userStyleRepository.findById(user.getId()).orElse(null);
     if (style == null) return "";
 
+    // 2026-08-22 - UserStyle 내부 저장값이 Double로 바뀌어서(실시간 갱신 엔진용), 여기선
+    // 소수점을 반올림해서(UserStyle.round()) 예전처럼 정수 맵으로 만든다.
     Map<String, Integer> scores = new LinkedHashMap<>();
-    if (style.getInitEnergy() != null) scores.put("energy", style.getInitEnergy());
-    if (style.getInitImmersion() != null) scores.put("immersion", style.getInitImmersion());
-    if (style.getInitVibe() != null) scores.put("vibe", style.getInitVibe());
-    if (style.getInitAesthetic() != null) scores.put("aesthetic", style.getInitAesthetic());
-    if (style.getInitPacing() != null) scores.put("pacing", style.getInitPacing());
-    if (style.getInitDepth() != null) scores.put("depth", style.getInitDepth());
+    Integer energy = UserStyle.round(style.getInitEnergy());
+    Integer immersion = UserStyle.round(style.getInitImmersion());
+    Integer vibe = UserStyle.round(style.getInitVibe());
+    Integer aesthetic = UserStyle.round(style.getInitAesthetic());
+    Integer pacing = UserStyle.round(style.getInitPacing());
+    Integer depth = UserStyle.round(style.getInitDepth());
+    if (energy != null) scores.put("energy", energy);
+    if (immersion != null) scores.put("immersion", immersion);
+    if (vibe != null) scores.put("vibe", vibe);
+    if (aesthetic != null) scores.put("aesthetic", aesthetic);
+    if (pacing != null) scores.put("pacing", pacing);
+    if (depth != null) scores.put("depth", depth);
     if (scores.isEmpty()) return "";
 
     List<String> traits = scores.entrySet().stream()
@@ -269,6 +277,7 @@ public class AiChatServiceImpl implements AiChatService {
   private final WeatherService weatherService;
   private final PlaceRepository placeRepository;
   private final UserStyleRepository userStyleRepository;
+  private final org.ict.datemanagerbackend.domain.user.service.UserStyleUpdateService userStyleUpdateService;
   private final ObjectMapper objectMapper;
   private final RestTemplate restTemplate = new RestTemplate();
 
@@ -468,12 +477,21 @@ public class AiChatServiceImpl implements AiChatService {
       for (String scoreType : SCORE_TYPES) {
         JsonNode valueNode = scores.path(scoreType);
         if (valueNode.isNumber()) {
+          int scoreValue = valueNode.asInt();
           aiChatMessageScoreRepository.save(
               AiChatMessageScore.builder()
                   .message(userMessage)
                   .scoreType(scoreType)
-                  .scoreValue(valueNode.asInt())
+                  .scoreValue(scoreValue)
                   .build());
+          // AI챗에서 명시적으로 언급된 성향("강함" 신호, α=0.10)을 UserStyle 실시간 갱신 엔진에도
+          // 반영한다(2026-08-22, backup/user-style 포팅) - 위 저장은 메시지별 분석 기록이고,
+          // 이건 그 값을 누적해서 유저의 실제 성향 점수 자체를 서서히 움직이는 별도 단계다.
+          try {
+            userStyleUpdateService.applyAiChatMention(userMessage.getSender().getId(), scoreType, scoreValue);
+          } catch (Exception ex) {
+            log.warn("성향값 실시간 갱신 실패 (messageId={}, axis={})", userMessage.getId(), scoreType, ex);
+          }
         }
       }
     } catch (Exception e) {

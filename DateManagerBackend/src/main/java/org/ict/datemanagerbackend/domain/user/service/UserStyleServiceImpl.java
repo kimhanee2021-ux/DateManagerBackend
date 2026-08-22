@@ -54,14 +54,16 @@ public class UserStyleServiceImpl implements UserStyleService {
   // 온보딩 화면을 그 자리에서 완료할 때만 메모리에 잠깐 채워지고 새로고침/재로그인하면 사라졌었다.
   @Override
   public SaveOnboardingStyleRequest getMyStyle(Long userId) {
+    // 2026-08-22 - UserStyle 내부 저장값은 실시간 갱신 엔진 때문에 소수점(Double)이지만, 이
+    // API로 나가는 값은 예전처럼 정수 그대로 유지한다(UserStyle.round() 참고).
     return userStyleRepository.findById(userId)
         .map(style -> new SaveOnboardingStyleRequest(
-            style.getInitEnergy(),
-            style.getInitImmersion(),
-            style.getInitVibe(),
-            style.getInitAesthetic(),
-            style.getInitPacing(),
-            style.getInitDepth()
+            UserStyle.round(style.getInitEnergy()),
+            UserStyle.round(style.getInitImmersion()),
+            UserStyle.round(style.getInitVibe()),
+            UserStyle.round(style.getInitAesthetic()),
+            UserStyle.round(style.getInitPacing()),
+            UserStyle.round(style.getInitDepth())
         ))
         .orElse(null);
   }
