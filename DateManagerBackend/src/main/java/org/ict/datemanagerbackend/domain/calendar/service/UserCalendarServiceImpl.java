@@ -65,6 +65,10 @@ private final UserRepository userRepository;
   @Override
   public UserCalendarResponse updateUserCalendar(Long userId, Long userCalendarId, UserCalendarUpdateRequest request) {
     UserCalendar calendar = userCalendarRepository.findById(userCalendarId).orElseThrow(()->new NoSuchElementException("켈린더 아이디가 존재하지 않습니다."));
+    // 소유권 검증 - 이게 없으면 캘린더 id만 알면 남의 일정도 수정할 수 있었다(2026-08-22 발견, 수정).
+    if (!calendar.getUser().getId().equals(userId)) {
+      throw new SecurityException("본인의 캘린더만 수정할 수 있습니다.");
+    }
     calendar.setTitle(request.getTitle());
     calendar.setDescription(request.getDescription());
     calendar.setTargetDate(request.getTargetDate());
@@ -87,6 +91,10 @@ private final UserRepository userRepository;
   public void deleteUserCalendar(Long userId, Long userCalendarId) {
     UserCalendar calendar = userCalendarRepository
         .findById(userCalendarId).orElseThrow(()->new NoSuchElementException("존재하지 않는 켈린더 ID 입니다."));
+    // 소유권 검증 - update와 동일한 이유(2026-08-22 발견, 수정).
+    if (!calendar.getUser().getId().equals(userId)) {
+      throw new SecurityException("본인의 캘린더만 삭제할 수 있습니다.");
+    }
     userCalendarRepository.delete(calendar);
   }
 }
