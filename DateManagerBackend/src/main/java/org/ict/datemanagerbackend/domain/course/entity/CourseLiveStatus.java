@@ -14,7 +14,13 @@ import java.time.LocalDateTime;
 @Builder
 public class CourseLiveStatus {
 
+  // PlaceStyle과 같은 이유로 @MapsId 패턴으로 전환(2026-08-13) - Spring Data JPA가 "@Id를 연관관계에
+  // 직접 붙인" 엔티티는 Repository 생성 시 "IdClass가 없다"고 오인해서 실패하는 문제가 있었다.
   @Id
+  @Column(name = "course_group_id")
+  private Long courseGroupId;
+
+  @MapsId
   @OneToOne(fetch = FetchType.LAZY)
   @JoinColumn(name = "course_group_id")
   private CourseGroup courseGroup; // 코스 그룹과 PK를 공유하는 1:1 관계

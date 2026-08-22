@@ -58,6 +58,45 @@ public class WeatherService {
     return describeWeather(sky, pty, temp);
   }
 
+  // 큐레이션 탭 "날씨 기반 실내/실외 자동 필터"용(2026-08-20). WeatherResponse는 화면에 그대로 보여줄
+  // 문자열(아이콘/기온 텍스트/설명)이라 프로그램이 판단에 쓸 원시값(비 여부, 숫자 기온)이 없어서, 이
+  // 용도로 별도 메서드를 뒀다 - 기존 getCurrentWeather를 쓰는 홈 화면 날씨 칩에는 영향 없음.
+  // raining: PTY(강수형태) 1(비) 또는 5(빗방울)일 때만 - 눈/진눈깨비는 일단 포함하지 않음(사용자가
+  // "비가 오면"이라고 명시적으로 말한 범위만 우선 반영, 2026-08-20).
+  // extremeTemp: 폭염/한파 기준을 그대로 쓰기엔(기상청 특보 기준은 일 최고/최저 기준이라 시간당
+  // 실황값인 T1H와는 다른 지표) 정확하지 않지만, 큐레이션 필터 목적으로는 33도 이상/영하 5도 이하를
+  // 대략의 기준으로 잡았다 - 필요하면 나중에 조정 가능.
+  public record CurationWeatherSignal(boolean raining, boolean extremeTemp) {
+  }
+
+  public CurationWeatherSignal getCurationWeatherSignal(double lat, double lon) {
+    int[] grid = latLonToGrid(lat, lon);
+    int nx = grid[0];
+    int ny = grid[1];
+
+    JsonNode ncstItems = fetchItems("getUltraSrtNcst", ncstBaseDateTime(), nx, ny);
+    JsonNode fcstItems = fetchItems("getUltraSrtFcst", fcstBaseDateTime(), nx, ny);
+
+    String tempText = findValue(ncstItems, "T1H", "obsrValue");
+    String pty = findValue(ncstItems, "PTY", "obsrValue");
+    if (pty == null) {
+      pty = findNearestFcstValue(fcstItems, "PTY");
+    }
+
+    boolean raining = "1".equals(pty) || "5".equals(pty);
+    boolean extremeTemp = false;
+    if (tempText != null) {
+      try {
+        double temp = Double.parseDouble(tempText);
+        extremeTemp = temp >= 33.0 || temp <= -5.0;
+      } catch (NumberFormatException ignored) {
+        // 기온 파싱 실패 시 극한 기온 아님으로 취급(안전한 기본값)
+      }
+    }
+
+    return new CurationWeatherSignal(raining, extremeTemp);
+  }
+
   // 위경도를 기상청 격자 좌표(nx, ny)로 변환 - 기상청이 배포하는 공식 좌표 변환식 그대로 이식
   private int[] latLonToGrid(double lat, double lon) {
     double re = RE / GRID;

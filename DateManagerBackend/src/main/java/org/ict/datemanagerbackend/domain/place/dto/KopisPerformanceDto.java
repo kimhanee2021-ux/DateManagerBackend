@@ -6,6 +6,10 @@ public record KopisPerformanceDto(
     String prfnm,    // 공연명
     String fcltynm,  // 공연시설명
     String poster,   // 포스터 이미지 URL
-    String genrenm   // 장르명
+    String genrenm,  // 장르명
+    String prfpdfrom, // 공연시작일 (yyyy.MM.dd 형식으로 내려옴) - 목록 API 응답에 이미 포함되어 있음
+    String prfpdto,   // 공연종료일
+    String openrun,   // 오픈런 여부 ("Y"/"N")
+    String prfstate   // 공연상태 ("공연예정"/"공연중"/"공연완료")
 ) {
 }

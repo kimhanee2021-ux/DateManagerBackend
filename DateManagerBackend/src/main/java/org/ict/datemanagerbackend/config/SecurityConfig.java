@@ -47,9 +47,11 @@ public class SecurityConfig {
                 .cors(Customizer.withDefaults())
                 .authorizeHttpRequests(auth -> auth
                         // 소셜로그인 진입/콜백 경로, 이메일 로그인/회원가입, 헬스체크는 인증 없이 허용
-                        .requestMatchers("/oauth2/**", "/login/**", "/api/auth/**", "/api/health").permitAll()
+                        .requestMatchers("/oauth2/**", "/login/**", "/api/auth/**", "/api/health","/swagger-ui/**").permitAll()
                         // 장소 조회는 로그인 없이 보이는 홈 탭 추천 카드에서도 쓰이므로 GET만 공개
                         .requestMatchers(HttpMethod.GET, "/api/places/**").permitAll()
+                        // 날씨도 홈 탭 배너에 로그인 여부와 상관없이 보여야 해서 공개(유저 개인정보 아님)
+                        .requestMatchers(HttpMethod.GET, "/api/weather").permitAll()
                         // 그 외 /api/** 는 반드시 로그인(JWT)이 있어야 접근 가능
                         .requestMatchers("/api/**").authenticated()
                         .anyRequest().permitAll())

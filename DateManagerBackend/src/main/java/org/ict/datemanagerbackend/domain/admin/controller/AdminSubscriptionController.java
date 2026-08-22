@@ -1,10 +1,10 @@
 package org.ict.datemanagerbackend.domain.admin.controller;
 
-import org.ict.datemanagerbackend.domain.user.entity.Subscription;
+import org.ict.datemanagerbackend.domain.admin.service.AdminAuthService;
+import org.ict.datemanagerbackend.domain.subscription.entity.Subscription;
 import org.ict.datemanagerbackend.domain.user.entity.User;
-import org.ict.datemanagerbackend.domain.user.repository.SubscriptionRepository;
+import org.ict.datemanagerbackend.domain.subscription.repository.SubscriptionRepository;
 import org.ict.datemanagerbackend.domain.user.repository.UserRepository;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
@@ -26,8 +26,8 @@ import java.util.Map;
 import java.util.Set;
 
 // 아직 유저가 직접 구독을 신청하는 화면/결제 연동이 없어서, 지금은 관리자가 수동으로
-// 구독을 만들고/바꾸고/취소하는 용도로 이 컨트롤러를 쓴다. 관리자 권한 체크 방식은
-// AdminController와 동일(app.admin-email과 로그인 이메일 비교).
+// 구독을 만들고/바꾸고/취소하는 용도로 이 컨트롤러를 쓴다. 관리자 권한 체크는 AdminAuthService
+// 공유 (예전엔 이 로직을 AdminController와 각자 복붙해서 갖고 있었음, 2026-08-18 정리).
 @RestController
 @RequestMapping("/api/admin/subscriptions")
 public class AdminSubscriptionController {
@@ -36,13 +36,13 @@ public class AdminSubscriptionController {
 
     private final SubscriptionRepository subscriptionRepository;
     private final UserRepository userRepository;
+    private final AdminAuthService adminAuthService;
 
-    @Value("${app.admin-email}")
-    private String adminEmail;
-
-    public AdminSubscriptionController(SubscriptionRepository subscriptionRepository, UserRepository userRepository) {
+    public AdminSubscriptionController(SubscriptionRepository subscriptionRepository, UserRepository userRepository,
+                                        AdminAuthService adminAuthService) {
         this.subscriptionRepository = subscriptionRepository;
         this.userRepository = userRepository;
+        this.adminAuthService = adminAuthService;
     }
 
     public record AdminSubscriptionDto(Long id, Long userId, String userEmail, String userNickname,
@@ -57,11 +57,7 @@ public class AdminSubscriptionController {
     }
 
     private boolean isAdmin(Authentication authentication) {
-        Long userId = (Long) authentication.getPrincipal();
-        User user = userRepository.findById(userId).orElse(null);
-        return user != null && user.getEmail() != null
-                && !adminEmail.isBlank()
-                && user.getEmail().equalsIgnoreCase(adminEmail);
+        return adminAuthService.isAdmin(authentication);
     }
 
     @GetMapping

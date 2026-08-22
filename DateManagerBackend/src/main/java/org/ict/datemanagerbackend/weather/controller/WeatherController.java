@@ -15,7 +15,8 @@ public class WeatherController {
 
   private final WeatherService weatherService;
 
-  // /api/**는 SecurityConfig에서 기본적으로 로그인(JWT)이 있어야 접근 가능하도록 되어 있음
+  // 로그인 여부와 상관없이 홈 탭 배너에 날씨를 보여줘야 해서 SecurityConfig에서 GET만 공개로 열어둠
+  // (2026-08-13, 원래는 /api/**가 기본 인증 필요라 비로그인 상태에서 이 API가 302로 막혀있었음)
   @GetMapping
   public WeatherResponse getWeather(@RequestParam double lat, @RequestParam double lon) {
     return weatherService.getCurrentWeather(lat, lon);

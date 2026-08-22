@@ -52,7 +52,15 @@ dependencies {
     implementation platform('software.amazon.awssdk:bom:2.29.52')
     implementation 'software.amazon.awssdk:s3'
 
+    implementation 'com.fasterxml.jackson.datatype:jackson-datatype-jsr310'
+
     runtimeOnly 'com.oracle.database.jdbc:ojdbc11'
+
+    /* 숙박업 CSV(서울 열린데이터광장) 파싱용 - 주소 필드에 콤마가 섞여있어 단순 split으로는 못 나눔.
+       좌표계 변환(EPSG:5174 -> WGS84)은 proj4j로 시도했다가 정확도 문제(약 350m 오차)로 그만두고
+       data/convert_lodging_csv.py(pyproj)가 미리 처리하도록 바꿔서, 자바 쪽엔 좌표계 라이브러리가
+       따로 필요 없다. */
+    implementation 'org.apache.commons:commons-csv:1.11.0'
     testImplementation 'org.springframework.boot:spring-boot-starter-data-jpa-test'
     testImplementation 'org.springframework.boot:spring-boot-starter-security-test'
     testImplementation 'org.springframework.boot:spring-boot-starter-security-oauth2-client-test'

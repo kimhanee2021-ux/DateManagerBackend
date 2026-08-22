@@ -5,6 +5,7 @@ import jakarta.persistence.Entity;
 import jakarta.persistence.FetchType;
 import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
+import jakarta.persistence.MapsId;
 import jakarta.persistence.OneToOne;
 import jakarta.persistence.Table;
 import lombok.AccessLevel;
@@ -29,7 +30,14 @@ import java.time.LocalDateTime;
 @Builder
 public class PlaceStyle {
 
+  // Spring Data JPA가 "@Id를 연관관계에 직접 붙인" 엔티티는 Repository를 만들 때
+  // "IdClass가 없다"고 오인해서 실패하는 문제가 있어(2026-08-13 PlaceStyleRepository 생성 중 발견),
+  // JPA 표준 "공유 기본키(shared primary key)" 패턴인 @MapsId로 바꿨다 - 실제 DB 컬럼(place_id)은 그대로.
   @Id
+  @Column(name = "place_id")
+  private Long placeId;
+
+  @MapsId
   @OneToOne(fetch = FetchType.LAZY)
   @JoinColumn(name = "place_id")
   private Place place; // 장소와 PK를 공유하는 1:1 관계
@@ -58,6 +66,13 @@ public class PlaceStyle {
   @Builder.Default
   @Column(name = "score_depth", nullable = false)
   private Integer scoreDepth = 50; // 깊이 성향 점수 (생성 시 중립값 50, 이후 큐레이션 로직이 갱신)
+
+  // nullable=false를 안 쓰는 이유는 PlaceCategory.scorePacing과 동일(기존 행이 있는 테이블에
+  // NOT NULL 컬럼을 ddl-auto로 추가하면 ORA-01758로 실패함).
+  @Setter
+  @Builder.Default
+  @Column(name = "score_pacing")
+  private Integer scorePacing = 50; // 즉흥·계획 성향 점수(2026-08-20 추가, 생성 시 중립값 50)
 
   @Setter
   @Builder.Default

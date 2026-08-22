@@ -70,7 +70,7 @@ public class CoupleInvite {
   private String status; // PENDING(대기) -> ACCEPTED(수락 완료) 또는 EXPIRED(시간 초과)
 
   @Column(name = "expires_at", nullable = false)
-  private LocalDateTime expiresAt; // 만료 시각 (생성 시점 + 24시간). 이 시각이 지나면 acceptInvite()가 거부한다.
+  private LocalDateTime expiresAt; // 만료 시각 (생성 시점 + 1시간). 이 시각이 지나면 acceptInvite()가 거부한다.
 
   @Column(name = "created_at", nullable = false)
   private LocalDateTime createdAt; // 초대 생성 시각
