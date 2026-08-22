@@ -26,4 +26,10 @@ public interface AdminPlaceService {
   Map<String, Integer> importFullDump(List<PlaceDumpDto> dump);
   // <<TourAPI 출처 장소 좌표를 카카오와 대조해 재검증/교정 - 수십 분 이상 걸려서 백그라운드로 돌리고 바로 반환>>
   Map<String, String> verifyTourApiCoordinates();
+  // <<이름 키워드로 못 잡은 미분류 장소를 네이버 지역 검색 API의 실제 category 태그로 재분류(최대 limit건)>>
+  Map<String, Integer> matchPlaceCategoriesViaNaver(int limit);
+  // <<장소↔세부분류 연결 백업(CSV 본문) - (externalSource,externalId)+parentCategory/subCategory 기준>>
+  String exportPlaceCategoryLinksCsv();
+  // <<exportPlaceCategoryLinksCsv로 받은 CSV를 내 DB에 그대로 반영(매칭 로직 재실행 불필요)>>
+  Map<String, Integer> importPlaceCategoryLinksCsv(String csv);
 }

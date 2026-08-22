@@ -15,6 +15,7 @@ import org.ict.datemanagerbackend.domain.place.service.CultureEventSyncService;
 import org.ict.datemanagerbackend.domain.place.service.KakaoPlaceSyncService;
 import org.ict.datemanagerbackend.domain.place.service.LodgingCsvSyncService;
 import org.ict.datemanagerbackend.domain.place.service.MuseumSyncService;
+import org.ict.datemanagerbackend.domain.place.service.NaverCategoryMatchService;
 import org.ict.datemanagerbackend.domain.place.service.NaverPlaceSyncService;
 import org.ict.datemanagerbackend.domain.place.service.PlaceCoordinateVerificationService;
 import org.ict.datemanagerbackend.domain.place.service.PlaceDedupService;
@@ -50,6 +51,7 @@ public class AdminPlaceServiceImpl implements AdminPlaceService {
   private final PlaceAmenityRepository placeAmenityRepository;
   private final SportsSyncService sportsSyncService;
   private final PlaceCoordinateVerificationService placeCoordinateVerificationService;
+  private final NaverCategoryMatchService naverCategoryMatchService;
 
   public AdminPlaceServiceImpl(PlaceRepository placeRepository, PlaceCategoryRepository placeCategoryRepository,
                                 PlaceSyncService placeSyncService, TourApiSyncService tourApiSyncService,
@@ -58,7 +60,8 @@ public class AdminPlaceServiceImpl implements AdminPlaceService {
                                 CultureEventSyncService cultureEventSyncService, PlaceDedupService placeDedupService,
                                 PlaceStyleRepository placeStyleRepository, PlaceRealityRepository placeRealityRepository,
                                 PlaceAmenityRepository placeAmenityRepository, SportsSyncService sportsSyncService,
-                                PlaceCoordinateVerificationService placeCoordinateVerificationService) {
+                                PlaceCoordinateVerificationService placeCoordinateVerificationService,
+                                NaverCategoryMatchService naverCategoryMatchService) {
     this.placeRepository = placeRepository;
     this.placeCategoryRepository = placeCategoryRepository;
     this.placeSyncService = placeSyncService;
@@ -73,6 +76,7 @@ public class AdminPlaceServiceImpl implements AdminPlaceService {
     this.placeRealityRepository = placeRealityRepository;
     this.placeAmenityRepository = placeAmenityRepository;
     this.sportsSyncService = sportsSyncService;
+    this.naverCategoryMatchService = naverCategoryMatchService;
     this.placeCoordinateVerificationService = placeCoordinateVerificationService;
   }
 
@@ -392,6 +396,79 @@ public class AdminPlaceServiceImpl implements AdminPlaceService {
       updated++;
     }
     return Map.of("created", created, "updated", updated, "skipped", skipped);
+  }
+
+  // 네이버 지역 검색 API의 실제 category 태그로 이름 키워드만으론 못 잡던 장소를 재분류(2026-08-22).
+  // NaverCategoryMatchService.MatchResult -> Map으로 펼쳐서 다른 관리자 API와 반환 타입을 통일한다.
+  @Override
+  public Map<String, Integer> matchPlaceCategoriesViaNaver(int limit) {
+    var result = naverCategoryMatchService.matchUnclassifiedPlaces(limit);
+    return Map.of(
+        "attempted", result.attempted(),
+        "matched", result.matched(),
+        "apiNoResult", result.apiNoResult(),
+        "noConfidentCandidate", result.noConfidentCandidate(),
+        "noKeywordMatch", result.noKeywordMatch()
+    );
+  }
+
+  // 장소↔세부분류 연결(place_category_id) CSV 백업(2026-08-22). PlaceDumpDto와 똑같은 이유로 raw id
+  // 대신 (externalSource, externalId) + parentCategory/subCategory 문자열로 내보낸다 - 받는 사람 DB의
+  // place_categories 자동증가 id가 나와 다를 수 있어서, id를 그대로 옮기면 엉뚱한 분류에 연결될 위험이
+  // 있다. import 쪽에서 parentCategory+subCategory로 다시 조회해 안전하게 연결한다.
+  @Override
+  public String exportPlaceCategoryLinksCsv() {
+    StringBuilder csv = new StringBuilder();
+    csv.append("externalSource,externalId,parentCategory,subCategory\n");
+    for (Place place : placeRepository.findAll()) {
+      if (place.getPlaceCategory() == null || place.getExternalSource() == null || place.getExternalId() == null) {
+        continue;
+      }
+      csv.append(csvEscape(place.getExternalSource())).append(',')
+          .append(csvEscape(place.getExternalId())).append(',')
+          .append(csvEscape(place.getPlaceCategory().getParentCategory())).append(',')
+          .append(csvEscape(place.getPlaceCategory().getSubCategory())).append('\n');
+    }
+    return csv.toString();
+  }
+
+  // exportPlaceCategoryLinksCsv로 받은 CSV를 그대로 올리면, 이 서버가 자기 로컬 DB의 place_categories에서
+  // parentCategory+subCategory로 다시 찾아 연결한다 - 매칭 로직(네이버 API 호출 등)을 팀원 컴퓨터마다
+  // 다시 돌릴 필요 없이 결과만 그대로 반영된다. 첫 줄(헤더)은 건너뛴다.
+  @Override
+  public Map<String, Integer> importPlaceCategoryLinksCsv(String csv) {
+    int linked = 0;
+    int placeNotFound = 0;
+    int categoryNotFound = 0;
+    List<String> lines = csv.lines().toList();
+    for (int i = 1; i < lines.size(); i++) {
+      String line = lines.get(i).strip();
+      if (line.isEmpty()) continue;
+      List<String> cols = parseCsvLine(line);
+      if (cols.size() < 4) continue;
+
+      String externalSource = cols.get(0);
+      String externalId = cols.get(1);
+      String parentCategory = cols.get(2);
+      String subCategory = cols.get(3);
+
+      Place place = placeRepository.findByExternalSourceAndExternalId(externalSource, externalId).orElse(null);
+      if (place == null) {
+        placeNotFound++;
+        continue;
+      }
+      PlaceCategory category = placeCategoryRepository
+          .findByParentCategoryAndSubCategory(parentCategory, subCategory)
+          .orElse(null);
+      if (category == null) {
+        categoryNotFound++;
+        continue;
+      }
+      place.setPlaceCategory(category);
+      placeRepository.save(place);
+      linked++;
+    }
+    return Map.of("linked", linked, "placeNotFound", placeNotFound, "categoryNotFound", categoryNotFound);
   }
 
   // 콤마/따옴표가 포함된 필드를 감안한 최소 CSV 파서(csvEscape의 역연산) - 외부 라이브러리 없이

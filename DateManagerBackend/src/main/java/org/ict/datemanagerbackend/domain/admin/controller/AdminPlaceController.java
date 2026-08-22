@@ -128,6 +128,37 @@ public class AdminPlaceController {
     return ResponseEntity.ok(adminPlaceService.verifyTourApiCoordinates());
   }
 
+  // 이름 키워드로 안 잡히는 미분류 장소를 네이버 지역 검색 API로 재분류(2026-08-22) - API 호출량이
+  // 커서(장소 하나당 1회) limit으로 배치 크기를 조절한다. 여러 번 나눠 호출해도 안전(이미 연결된
+  // 장소는 자동으로 대상에서 빠짐).
+  @PostMapping("/categories/naver-match")
+  public ResponseEntity<?> matchPlaceCategoriesViaNaver(Authentication authentication,
+                                                          @org.springframework.web.bind.annotation.RequestParam(defaultValue = "50") int limit) {
+    if (!adminAuthService.isAdmin(authentication)) {
+      return ResponseEntity.status(403).body(Map.of("error", "관리자만 접근할 수 있습니다"));
+    }
+    return ResponseEntity.ok(adminPlaceService.matchPlaceCategoriesViaNaver(limit));
+  }
+
+  @GetMapping("/categories/links/export")
+  public ResponseEntity<String> exportPlaceCategoryLinks(Authentication authentication) {
+    if (!adminAuthService.isAdmin(authentication)) {
+      return ResponseEntity.status(403).body("관리자만 접근할 수 있습니다");
+    }
+    return ResponseEntity.ok()
+        .header("Content-Type", "text/csv; charset=UTF-8")
+        .header("Content-Disposition", "attachment; filename=place_category_links_export.csv")
+        .body(adminPlaceService.exportPlaceCategoryLinksCsv());
+  }
+
+  @PostMapping(value = "/categories/links/import", consumes = "text/plain")
+  public ResponseEntity<?> importPlaceCategoryLinks(Authentication authentication, @RequestBody String csv) {
+    if (!adminAuthService.isAdmin(authentication)) {
+      return ResponseEntity.status(403).body(Map.of("error", "관리자만 접근할 수 있습니다"));
+    }
+    return ResponseEntity.ok(adminPlaceService.importPlaceCategoryLinksCsv(csv));
+  }
+
   @GetMapping("/sync-status")
   public ResponseEntity<?> placesSyncStatusEndpoint(Authentication authentication) {
     if (!adminAuthService.isAdmin(authentication)) {
