@@ -40,6 +40,9 @@ public class SubscriptionController {
 
     @GetMapping("/me")
     public ResponseEntity<?> getMySubscription(Authentication authentication) {
+        if (authentication == null) {
+            return ResponseEntity.status(401).body(Map.of("error", "로그인이 필요합니다"));
+        }
         Long userId = (Long) authentication.getPrincipal();
         return subscriptionService.findMySubscription(userId)
                 .<ResponseEntity<?>>map(sub -> ResponseEntity.ok(toDto(sub)))
@@ -48,6 +51,9 @@ public class SubscriptionController {
 
     @PostMapping("/billing-key")
     public ResponseEntity<?> issueBillingKey(Authentication authentication, @RequestBody IssueBillingKeyRequest req) {
+        if (authentication == null) {
+            return ResponseEntity.status(401).body(Map.of("error", "로그인이 필요합니다"));
+        }
         Long userId = (Long) authentication.getPrincipal();
         User user = userRepository.findById(userId).orElse(null);
         if (user == null) {
@@ -70,6 +76,9 @@ public class SubscriptionController {
     // PAST_DUE(결제 실패) 상태를 수동으로 재시도할 때 사용. 정상 구독 중엔 자동 갱신(스케줄러)만으로 충분하다.
     @PostMapping("/charge")
     public ResponseEntity<?> retryCharge(Authentication authentication) {
+        if (authentication == null) {
+            return ResponseEntity.status(401).body(Map.of("error", "로그인이 필요합니다"));
+        }
         Long userId = (Long) authentication.getPrincipal();
         try {
             Subscription subscription = subscriptionService.retryCharge(userId);
@@ -81,6 +90,9 @@ public class SubscriptionController {
 
     @PostMapping("/cancel")
     public ResponseEntity<?> cancel(Authentication authentication) {
+        if (authentication == null) {
+            return ResponseEntity.status(401).body(Map.of("error", "로그인이 필요합니다"));
+        }
         Long userId = (Long) authentication.getPrincipal();
         try {
             Subscription subscription = subscriptionService.cancel(userId);

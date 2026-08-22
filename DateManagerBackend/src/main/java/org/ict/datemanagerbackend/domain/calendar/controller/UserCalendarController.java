@@ -29,15 +29,28 @@ public class UserCalendarController {
     return (Long) authentication.getPrincipal();
   }
 
+  // 토큰 없이(또는 로그인 직후 토큰이 axios 헤더에 아직 안 붙은 타이밍에) 요청이 들어오면
+  // authentication 자체가 null이라 currentUserId()에서 NPE(500)가 났다(2026-08-22 발견) -
+  // PlaceController의 기존 패턴과 동일하게 401로 명확히 거절한다.
+  private ResponseEntity<?> unauthorized() {
+    return ResponseEntity.status(401).body(Map.of("error", "로그인이 필요합니다"));
+  }
+
   @PostMapping
-  public ResponseEntity<UserCalendarResponse> createUserCalendar(Authentication authentication,
+  public ResponseEntity<?> createUserCalendar(Authentication authentication,
                                                                    @RequestBody UserCalendarCreateRequest userCalendarCreateRequest) {
+    if (authentication == null) {
+      return unauthorized();
+    }
     UserCalendarResponse userCalendarResponse = userCalendarService.createUserCalendar(currentUserId(authentication), userCalendarCreateRequest);
     return ResponseEntity.status(201).body(userCalendarResponse);
   }
   @GetMapping
-  public ResponseEntity<List<UserCalendarResponse>> getUserCalendar(Authentication authentication,
+  public ResponseEntity<?> getUserCalendar(Authentication authentication,
                                                                       @RequestParam LocalDate start, @RequestParam LocalDate end) {
+    if (authentication == null) {
+      return unauthorized();
+    }
     List<UserCalendarResponse> getUserCalendar = userCalendarService.getMonthlyCalendars(currentUserId(authentication), start, end);
     return ResponseEntity.ok(getUserCalendar);
   }
@@ -45,6 +58,9 @@ public class UserCalendarController {
   @PutMapping("/{id}")
   public ResponseEntity<?> PutUserCalendar(Authentication authentication, @PathVariable Long id,
                                             @RequestBody UserCalendarUpdateRequest userCalendarUpdateRequest) {
+    if (authentication == null) {
+      return unauthorized();
+    }
     try {
       return ResponseEntity.ok(userCalendarService.updateUserCalendar(currentUserId(authentication), id, userCalendarUpdateRequest));
     } catch (NoSuchElementException e) {
@@ -55,6 +71,9 @@ public class UserCalendarController {
   }
   @DeleteMapping("/{id}")
   public ResponseEntity<?> DeleteUserCalendar(Authentication authentication, @PathVariable Long id){
+    if (authentication == null) {
+      return unauthorized();
+    }
     try {
       userCalendarService.deleteUserCalendar(currentUserId(authentication), id);
       return ResponseEntity.noContent().build();

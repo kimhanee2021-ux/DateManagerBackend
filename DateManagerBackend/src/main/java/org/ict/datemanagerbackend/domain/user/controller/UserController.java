@@ -40,6 +40,9 @@ public class UserController {
 
     @GetMapping
     public ResponseEntity<?> getMe(Authentication authentication) {
+        if (authentication == null) {
+            return ResponseEntity.status(401).body(Map.of("error", "로그인이 필요합니다"));
+        }
         Long userId = (Long) authentication.getPrincipal();
         Optional<User> userOpt = userRepository.findById(userId);
         if (userOpt.isEmpty()) {
@@ -50,6 +53,9 @@ public class UserController {
 
     @PutMapping
     public ResponseEntity<?> updateMe(Authentication authentication, @RequestBody UpdateMeRequest req) {
+        if (authentication == null) {
+            return ResponseEntity.status(401).body(Map.of("error", "로그인이 필요합니다"));
+        }
         Long userId = (Long) authentication.getPrincipal();
         Optional<User> userOpt = userRepository.findById(userId);
         if (userOpt.isEmpty()) {
@@ -73,6 +79,9 @@ public class UserController {
     // passwordHash != null인 이메일의 소셜 로그인을 막고 있어서, 이쪽만 막으면 원칙이 대칭이 된다.)
     @PutMapping("/password")
     public ResponseEntity<?> changePassword(Authentication authentication, @RequestBody ChangePasswordRequest req) {
+        if (authentication == null) {
+            return ResponseEntity.status(401).body(Map.of("error", "로그인이 필요합니다"));
+        }
         if (req.newPassword() == null || req.newPassword().isBlank()) {
             return ResponseEntity.badRequest().body(Map.of("error", "새 비밀번호를 입력해주세요"));
         }
@@ -97,6 +106,9 @@ public class UserController {
     // (재업로드하면 기존 S3 객체는 그대로 두고 새 객체만 추가 - 정리는 지금 범위 밖).
     @PostMapping("/photo")
     public ResponseEntity<?> uploadPhoto(Authentication authentication, @RequestParam("file") MultipartFile file) {
+        if (authentication == null) {
+            return ResponseEntity.status(401).body(Map.of("error", "로그인이 필요합니다"));
+        }
         ProfileImageService.ValidationError validationError = profileImageService.validate(file);
         if (validationError != null) {
             return ResponseEntity.badRequest().body(Map.of("error", validationError.message()));
@@ -119,6 +131,9 @@ public class UserController {
     // 탈퇴 처리 후 프론트에서 로컬 토큰을 지우는 것으로 즉시 로그아웃 효과를 낸다.
     @DeleteMapping
     public ResponseEntity<?> withdraw(Authentication authentication) {
+        if (authentication == null) {
+            return ResponseEntity.status(401).body(Map.of("error", "로그인이 필요합니다"));
+        }
         Long userId = (Long) authentication.getPrincipal();
         Optional<User> userOpt = userRepository.findById(userId);
         if (userOpt.isEmpty()) {

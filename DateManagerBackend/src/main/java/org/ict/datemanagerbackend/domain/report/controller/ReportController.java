@@ -40,6 +40,9 @@ public class ReportController {
 
     @PostMapping
     public ResponseEntity<?> createReport(Authentication authentication, @RequestBody CreateReportRequest req) {
+        if (authentication == null) {
+            return ResponseEntity.status(401).body(Map.of("error", "로그인이 필요합니다"));
+        }
         Long userId = (Long) authentication.getPrincipal();
         User reporter = userRepository.findById(userId).orElse(null);
         if (reporter == null) {

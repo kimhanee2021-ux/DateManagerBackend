@@ -39,6 +39,9 @@ public class BoardController {
 
   @PostMapping
   public ResponseEntity<?> create(Authentication authentication, @RequestBody BoardPostCreateRequest request) {
+    if (authentication == null) {
+      return ResponseEntity.status(401).body(Map.of("error", "로그인이 필요합니다"));
+    }
     if (request.getTitle() == null || request.getTitle().isBlank()
         || request.getContent() == null || request.getContent().isBlank()) {
       return ResponseEntity.badRequest().body(Map.of("error", "제목과 내용을 입력해주세요"));
@@ -63,6 +66,9 @@ public class BoardController {
   @PutMapping("/{id}")
   public ResponseEntity<?> update(Authentication authentication, @PathVariable Long id,
                                    @RequestBody BoardPostUpdateRequest request) {
+    if (authentication == null) {
+      return ResponseEntity.status(401).body(Map.of("error", "로그인이 필요합니다"));
+    }
     try {
       return ResponseEntity.ok(boardPostService.updatePost(currentUserId(authentication), id, request));
     } catch (NoSuchElementException e) {
@@ -75,6 +81,9 @@ public class BoardController {
 
   @DeleteMapping("/{id}")
   public ResponseEntity<?> delete(Authentication authentication, @PathVariable Long id) {
+    if (authentication == null) {
+      return ResponseEntity.status(401).body(Map.of("error", "로그인이 필요합니다"));
+    }
     try {
       boardPostService.deletePost(currentUserId(authentication), id);
       return ResponseEntity.ok(Map.of("success", true));

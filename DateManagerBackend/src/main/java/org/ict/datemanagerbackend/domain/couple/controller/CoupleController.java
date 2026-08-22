@@ -47,6 +47,9 @@ public class CoupleController {
 
   @PostMapping("/invite")
   public ResponseEntity<?> createInvite(Authentication authentication) {
+    if (authentication == null) {
+      return ResponseEntity.status(401).body(Map.of("error", "로그인이 필요합니다"));
+    }
     User me = currentUser(authentication);
     if (me == null) {
       return ResponseEntity.status(404).body(Map.of("error", "사용자를 찾을 수 없습니다"));
@@ -60,6 +63,9 @@ public class CoupleController {
 
   @PostMapping("/invite/{token}/accept")
   public ResponseEntity<?> acceptInvite(Authentication authentication, @PathVariable String token) {
+    if (authentication == null) {
+      return ResponseEntity.status(401).body(Map.of("error", "로그인이 필요합니다"));
+    }
     User me = currentUser(authentication);
     if (me == null) {
       return ResponseEntity.status(404).body(Map.of("error", "사용자를 찾을 수 없습니다"));
@@ -74,6 +80,9 @@ public class CoupleController {
 
   @GetMapping("/status")
   public ResponseEntity<?> getStatus(Authentication authentication) {
+    if (authentication == null) {
+      return ResponseEntity.status(401).body(Map.of("error", "로그인이 필요합니다"));
+    }
     User me = currentUser(authentication);
     if (me == null) {
       return ResponseEntity.status(404).body(Map.of("error", "사용자를 찾을 수 없습니다"));
@@ -84,6 +93,9 @@ public class CoupleController {
 
   @PutMapping("/met-date")
   public ResponseEntity<?> updateMetDate(Authentication authentication, @RequestBody CoupleMetDateRequest req) {
+    if (authentication == null) {
+      return ResponseEntity.status(401).body(Map.of("error", "로그인이 필요합니다"));
+    }
     User me = currentUser(authentication);
     if (me == null) {
       return ResponseEntity.status(404).body(Map.of("error", "사용자를 찾을 수 없습니다"));
@@ -98,6 +110,9 @@ public class CoupleController {
 
   @DeleteMapping
   public ResponseEntity<?> disconnect(Authentication authentication) {
+    if (authentication == null) {
+      return ResponseEntity.status(401).body(Map.of("error", "로그인이 필요합니다"));
+    }
     User me = currentUser(authentication);
     if (me == null) {
       return ResponseEntity.status(404).body(Map.of("error", "사용자를 찾을 수 없습니다"));
@@ -112,6 +127,9 @@ public class CoupleController {
 
   @GetMapping("/notifications/unread")
   public ResponseEntity<?> getUnreadNotifications(Authentication authentication) {
+    if (authentication == null) {
+      return ResponseEntity.status(401).body(Map.of("error", "로그인이 필요합니다"));
+    }
     User me = currentUser(authentication);
     if (me == null) {
       return ResponseEntity.status(404).body(Map.of("error", "사용자를 찾을 수 없습니다"));
@@ -121,6 +139,9 @@ public class CoupleController {
 
   @PostMapping("/notifications/read-all")
   public ResponseEntity<?> markAllNotificationsRead(Authentication authentication) {
+    if (authentication == null) {
+      return ResponseEntity.status(401).body(Map.of("error", "로그인이 필요합니다"));
+    }
     User me = currentUser(authentication);
     if (me == null) {
       return ResponseEntity.status(404).body(Map.of("error", "사용자를 찾을 수 없습니다"));
@@ -131,6 +152,9 @@ public class CoupleController {
 
   @PostMapping("/ack-admin-reconnect")
   public ResponseEntity<?> ackAdminReconnect(Authentication authentication) {
+    if (authentication == null) {
+      return ResponseEntity.status(401).body(Map.of("error", "로그인이 필요합니다"));
+    }
     User me = currentUser(authentication);
     if (me == null) {
       return ResponseEntity.status(404).body(Map.of("error", "사용자를 찾을 수 없습니다"));

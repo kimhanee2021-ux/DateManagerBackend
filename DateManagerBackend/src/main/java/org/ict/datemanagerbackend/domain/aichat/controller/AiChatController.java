@@ -55,6 +55,9 @@ public class AiChatController {
   @GetMapping("/sessions")
   public ResponseEntity<?> listSessions(Authentication authentication,
                                          @PageableDefault(size = 15, sort = "createdAt", direction = Sort.Direction.DESC) Pageable pageable) {
+    if (authentication == null) {
+      return ResponseEntity.status(401).body(Map.of("error", "로그인이 필요합니다"));
+    }
     User me = currentUser(authentication);
     if (me == null) {
       return ResponseEntity.status(404).body(Map.of("error", "사용자를 찾을 수 없습니다"));
@@ -67,6 +70,9 @@ public class AiChatController {
   /** POST /api/aichat/sessions - 새 채팅 세션 시작 */
   @PostMapping("/sessions")
   public ResponseEntity<?> createSession(Authentication authentication, @RequestBody(required = false) Map<String, String> body) {
+    if (authentication == null) {
+      return ResponseEntity.status(401).body(Map.of("error", "로그인이 필요합니다"));
+    }
     User me = currentUser(authentication);
     if (me == null) {
       return ResponseEntity.status(404).body(Map.of("error", "사용자를 찾을 수 없습니다"));
@@ -80,6 +86,9 @@ public class AiChatController {
   @PostMapping("/sessions/{sessionId}/messages")
   public ResponseEntity<?> sendMessage(Authentication authentication, @PathVariable Long sessionId,
                                         @RequestBody Map<String, String> body) {
+    if (authentication == null) {
+      return ResponseEntity.status(401).body(Map.of("error", "로그인이 필요합니다"));
+    }
     User me = currentUser(authentication);
     if (me == null) {
       return ResponseEntity.status(404).body(Map.of("error", "사용자를 찾을 수 없습니다"));
@@ -108,6 +117,9 @@ public class AiChatController {
   /** GET /api/aichat/sessions/{sessionId}/messages - 메시지 이력 조회 */
   @GetMapping("/sessions/{sessionId}/messages")
   public ResponseEntity<?> getMessages(Authentication authentication, @PathVariable Long sessionId) {
+    if (authentication == null) {
+      return ResponseEntity.status(401).body(Map.of("error", "로그인이 필요합니다"));
+    }
     User me = currentUser(authentication);
     if (me == null) {
       return ResponseEntity.status(404).body(Map.of("error", "사용자를 찾을 수 없습니다"));
