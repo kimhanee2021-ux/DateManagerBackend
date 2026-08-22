@@ -14,8 +14,13 @@ import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
 
+// 2026-08-22 - 원래 "/calendar"로 매핑돼 있었는데, SecurityConfig의 인증 필수 규칙이
+// "/api/**"에만 걸려 있어서 이 경로는 로그인 없이도(anyRequest().permitAll()) 그냥 통과돼버렸다.
+// 그 상태로 currentUserId()가 인증 정보 없이 authentication.getPrincipal()을 호출하면
+// NPE(500)가 나는 버그가 있었음 - 다른 컨트롤러들과 동일하게 "/api" 접두사를 붙여 인증이
+// 실제로 강제되게 고쳤다.
 @RestController
-@RequestMapping("/calendar")
+@RequestMapping("/api/calendar")
 @RequiredArgsConstructor
 public class UserCalendarController {
 
