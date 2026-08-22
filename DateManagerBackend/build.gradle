@@ -50,6 +50,8 @@ dependencies {
     implementation platform('software.amazon.awssdk:bom:2.29.52')
     implementation 'software.amazon.awssdk:s3'
 
+    implementation 'com.fasterxml.jackson.datatype:jackson-datatype-jsr310'
+
     runtimeOnly 'com.oracle.database.jdbc:ojdbc11'
 
     /* 숙박업 CSV(서울 열린데이터광장) 파싱용 - 주소 필드에 콤마가 섞여있어 단순 split으로는 못 나눔.
