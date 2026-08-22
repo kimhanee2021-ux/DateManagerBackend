@@ -71,6 +71,20 @@ spring:
         one-indexed-parameters: true #pageable index에서 자동으로 1을 빼기위한 설정(예: ?page=3요청시 pagebale index는 2
         page-parameter: page #page 파라미터변경(기본값:page)
 
+  #비밀번호 찾기(재설정) 메일 발송용 SMTP 설정 - PASS/문자 인증은 유료라 보류하고 Gmail 앱 비밀번호로
+  #무료 발송하는 방식을 채택했다. username/password는 발송 전용 지메일 계정 + 앱 비밀번호.
+  mail:
+    host: smtp.gmail.com
+    port: 587
+    username: ${MAIL_USERNAME}
+    password: ${MAIL_PASSWORD}
+    properties:
+      mail:
+        smtp:
+          auth: true
+          starttls:
+            enable: true
+
   #스웨거 UI URL 설정
   springdoc:
     swagger-ui:
