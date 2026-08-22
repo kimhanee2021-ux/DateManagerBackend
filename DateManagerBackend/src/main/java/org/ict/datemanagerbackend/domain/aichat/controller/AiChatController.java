@@ -8,6 +8,10 @@ import org.ict.datemanagerbackend.domain.aichat.entity.AiChatSession;
 import org.ict.datemanagerbackend.domain.aichat.service.AiChatService;
 import org.ict.datemanagerbackend.domain.user.entity.User;
 import org.ict.datemanagerbackend.domain.user.repository.UserRepository;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
+import org.springframework.data.web.PageableDefault;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
@@ -43,6 +47,23 @@ public class AiChatController {
     }
   }
 
+  /**
+   * GET /api/aichat/sessions - "지난 대화 보기" 목록. 로그아웃 후 다른 브라우저로 들어오면
+   * 프론트가 마지막 세션 id를 기억 못 해서 새 대화가 시작되는데, 이 목록으로 예전 세션을
+   * 찾아 이어서 대화할 수 있게 한다(2026-08-22 추가).
+   */
+  @GetMapping("/sessions")
+  public ResponseEntity<?> listSessions(Authentication authentication,
+                                         @PageableDefault(size = 15, sort = "createdAt", direction = Sort.Direction.DESC) Pageable pageable) {
+    User me = currentUser(authentication);
+    if (me == null) {
+      return ResponseEntity.status(404).body(Map.of("error", "사용자를 찾을 수 없습니다"));
+    }
+    Page<AiChatSessionResponse> sessions = aiChatService.listSessions(me, pageable)
+        .map(s -> new AiChatSessionResponse(s.getId(), s.getTitle(), s.getCreatedAt()));
+    return ResponseEntity.ok(sessions);
+  }
+
   /** POST /api/aichat/sessions - 새 채팅 세션 시작 */
   @PostMapping("/sessions")
   public ResponseEntity<?> createSession(Authentication authentication, @RequestBody(required = false) Map<String, String> body) {
@@ -74,7 +95,8 @@ public class AiChatController {
     try {
       AiChatMessage aiMessage = aiChatService.sendMessage(me, sessionId, text, lat, lon);
       return ResponseEntity.ok(new AiChatMessageResponse(
-          aiMessage.getId(), aiMessage.getSenderType(), aiMessage.getMessageText(), aiMessage.getCreatedAt()));
+          aiMessage.getId(), aiMessage.getSenderType(), aiMessage.getMessageText(), aiMessage.getCreatedAt(),
+          aiMessage.getFollowUpQuestions()));
     } catch (IllegalArgumentException e) {
       return ResponseEntity.status(404).body(Map.of("error", e.getMessage()));
     } catch (Exception e) {
@@ -92,7 +114,7 @@ public class AiChatController {
     }
     try {
       List<AiChatMessageResponse> messages = aiChatService.getMessages(me, sessionId).stream()
-          .map(m -> new AiChatMessageResponse(m.getId(), m.getSenderType(), m.getMessageText(), m.getCreatedAt()))
+          .map(m -> new AiChatMessageResponse(m.getId(), m.getSenderType(), m.getMessageText(), m.getCreatedAt(), null))
           .toList();
       return ResponseEntity.ok(messages);
     } catch (IllegalArgumentException e) {

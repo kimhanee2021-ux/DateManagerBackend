@@ -4,6 +4,7 @@ import jakarta.persistence.*;
 import lombok.*;
 import org.ict.datemanagerbackend.domain.user.entity.User;
 import java.time.LocalDateTime;
+import java.util.List;
 
 // 생성 시점에 고정되는 메시지 로그라 생성 이후 값이 바뀌지 않아 setter가 없다.
 @Entity
@@ -37,5 +38,11 @@ public class AiChatMessage {
   @Builder.Default
   @Column(name = "created_at", nullable = false, updatable = false)
   private LocalDateTime createdAt = LocalDateTime.now(); // 생성 일시
+
+  // 대화 중 후속 질문 추천(2026-08-22 추가) - DB엔 저장 안 하고, 방금 받은 AI 응답 하나에만 실어서
+  // 그 턴의 컨트롤러 응답에 얹어 보낸다(과거 이력을 다시 불러올 땐 새로 안 만들고 비워둠).
+  @Transient
+  @Setter
+  private List<String> followUpQuestions;
 
 }

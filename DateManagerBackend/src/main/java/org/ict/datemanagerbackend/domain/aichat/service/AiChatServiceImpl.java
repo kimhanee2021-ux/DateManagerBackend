@@ -13,9 +13,13 @@ import org.ict.datemanagerbackend.domain.aichat.repository.AiChatSessionReposito
 import org.ict.datemanagerbackend.domain.place.entity.Place;
 import org.ict.datemanagerbackend.domain.place.repository.PlaceRepository;
 import org.ict.datemanagerbackend.domain.user.entity.User;
+import org.ict.datemanagerbackend.domain.user.entity.UserStyle;
+import org.ict.datemanagerbackend.domain.user.repository.UserStyleRepository;
 import org.ict.datemanagerbackend.weather.dto.WeatherResponse;
 import org.ict.datemanagerbackend.weather.service.WeatherService;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
@@ -71,7 +75,7 @@ public class AiChatServiceImpl implements AiChatService {
   private static final DateTimeFormatter NOW_FORMAT =
       DateTimeFormatter.ofPattern("yyyy년 M월 d일 EEEE a h시 mm분", Locale.KOREAN);
 
-  // 페르소나를 잡아주는 고정 system 프롬프트. 컨텍스트 메시지(현재 시각/날씨)와는 역할이 달라서
+  // 페르소나를 잡아주는 system 프롬프트. 컨텍스트 메시지(현재 시각/날씨)와는 역할이 달라서
   // 따로 둔다 - 이건 세션이 바뀌어도 항상 똑같은 "역할 설정"이고, 컨텍스트는 요청마다 바뀌는 "상황 정보".
   //
   // 2026-08-20 사용자 지시로 "데이트 코치/상담사" 톤에서 "실제 애인과 대화하는 느낌"으로 전환함
@@ -80,16 +84,86 @@ public class AiChatServiceImpl implements AiChatService {
   // 팀원 담당)과 장소 성향값(PlaceStyle 5축, 빅데이터 분석으로 채울 예정, 아직 미착수)이 둘 다
   // 준비되면 "네 취향엔 이런 곳이 잘 맞을 것 같아" 식으로 성향 매칭 근거를 들어 추천하는 방향으로
   // 갈 것 - 지금은 그 데이터가 없어서 단순 근접 추천에 머무른다.
-  private static final String PERSONA_SYSTEM_PROMPT = """
-      너는 사용자와 연인처럼 다정하게 대화하는 데이트 앱 AI '데이트매니저'야. 상담사나 코치처럼 조언을
-      늘어놓는 게 아니라, 실제 남자친구·여자친구랑 대화하는 것처럼 친밀하고 다정한 말투로 데이트
-      장소·코스를 추천하고 데이트 관련 고민(선물, 대화 주제, 갈등 등)을 들어줘.
-      - 격식 있는 존댓말 대신, 애인 사이처럼 편안하고 다정한 반말 위주 말투를 써. 딱딱하게 정보만
-        나열하지 말고 챙겨주는 느낌으로 말해.
+  //
+  // 2026-08-22 - 프론트(AiChatTab.jsx의 resolveCoachByGender)는 이미 유저 성별에 따라 서연/도윤
+  // 이미지·이름을 다르게 보여주는데, 정작 여기 프롬프트는 성별 상관없이 "데이트매니저"라는 이름의
+  // 똑같은 문자열 하나였다 - AI가 자기 이름조차 모르는 상태였던 것. 프론트와 동일한 기준(FEMALE
+  // 유저 -> 도윤/남성스러운 톤, 그 외(MALE/UNKNOWN) -> 서연/여성스러운 톤)으로 프롬프트 자체를
+  // 성별별로 분리하고, 각 프롬프트에 코치 이름을 명시해서 AI가 그 이름으로 자신을 지칭하게 했다.
+  private static final String BASE_PERSONA_RULES = """
       - 답변은 3~4문장 이내로 짧고 구체적으로 해.
       - 데이트·연애와 관련 없는 질문(코딩, 시사, 숙제 등)에는 다정하게 거절하고 데이트 얘기로 화제를 돌려줘.
       - 확실하지 않은 정보(구체적인 가게 이름, 실시간 예약 가능 여부 등)는 지어내지 말고 모른다고 말해.
       """;
+
+  // 남성 사용자·기본값(성별 미상)에게 붙는 코치 - 프론트에서도 이 경우 서연 코치 이미지를 보여준다.
+  private static final String SEOYEON_PERSONA_PROMPT = """
+      너는 사용자의 여자친구처럼 다정하게 대화하는 AI 데이트 코치 '서연'이야. 상담사나 코치처럼 조언을
+      늘어놓는 게 아니라, 실제 여자친구랑 대화하는 것처럼 친밀하고 다정한 말투로 데이트 장소·코스를
+      추천하고 데이트 관련 고민(선물, 대화 주제, 갈등 등)을 들어줘.
+      - 격식 있는 존댓말 대신, 애인 사이처럼 편안하고 다정한 반말 위주 말투를 쓰되, 살짝 상냥하고
+        여성스러운 어투(부드러운 어미, 다정하게 챙겨주는 뉘앙스)를 자연스럽게 섞어. 딱딱하게 정보만
+        나열하지 말고 챙겨주는 느낌으로 말해.
+      """ + BASE_PERSONA_RULES;
+
+  // 여성 사용자에게 붙는 코치 - 프론트에서 도윤 코치 이미지를 보여주는 경우와 동일 기준.
+  private static final String DOYOON_PERSONA_PROMPT = """
+      너는 사용자의 남자친구처럼 다정하게 대화하는 AI 데이트 코치 '도윤'이야. 상담사나 코치처럼 조언을
+      늘어놓는 게 아니라, 실제 남자친구랑 대화하는 것처럼 친밀하고 다정한 말투로 데이트 장소·코스를
+      추천하고 데이트 관련 고민(선물, 대화 주제, 갈등 등)을 들어줘.
+      - 격식 있는 존댓말 대신, 애인 사이처럼 편안하고 다정한 반말 위주 말투를 쓰되, 살짝 든든하고
+        남성스러운 어투(자신감 있게 리드하는 뉘앙스, 다정하지만 씩씩한 느낌)를 자연스럽게 섞어. 딱딱하게
+        정보만 나열하지 말고 챙겨주는 느낌으로 말해.
+      """ + BASE_PERSONA_RULES;
+
+  /** 프론트(resolveCoachByGender)와 동일한 기준 - FEMALE만 도윤(남성 톤), 그 외는 서연(여성 톤). */
+  private String resolvePersonaPrompt(User user) {
+    String gender = user.getGender() == null ? "" : user.getGender().trim().toUpperCase(Locale.ROOT);
+    return "FEMALE".equals(gender) ? DOYOON_PERSONA_PROMPT : SEOYEON_PERSONA_PROMPT;
+  }
+
+  // 축(50점 기준 높음/낮음)별로 자연어로 풀어줄 설명 - AiChatTab.jsx의 AXIS_QUESTION_POOL과
+  // 같은 축 구성(온보딩 6대 성향)을 그대로 따른다.
+  private static final Map<String, String> AXIS_HIGH_DESC = Map.of(
+      "energy", "활동적인 걸 선호해", "immersion", "직접 참여하는 체험을 선호해",
+      "vibe", "트렌디한 곳을 선호해", "aesthetic", "감각적인 공간을 선호해",
+      "pacing", "즉흥적인 걸 선호해", "depth", "깊이 있는 콘텐츠를 선호해"
+  );
+  private static final Map<String, String> AXIS_LOW_DESC = Map.of(
+      "energy", "차분하고 여유로운 걸 선호해", "immersion", "가볍게 즐기는 걸 선호해",
+      "vibe", "편안하고 익숙한 분위기를 선호해", "aesthetic", "꾸밈없이 편한 곳을 선호해",
+      "pacing", "미리 계획하는 걸 선호해", "depth", "가볍고 부담 없는 걸 선호해"
+  );
+
+  /**
+   * 유저 성향값(온보딩 결과)을 자연어 한두 문장으로 풀어서 대화 컨텍스트에 얹는다(2026-08-22
+   * 추가). 지금까지는 대화 시작 전 추천 질문 고를 때만 성향값을 썼는데, 정작 대화 내내 AI가
+   * "이 유저가 어떤 취향인지"는 전혀 몰랐다 - 장소별 실성향점수가 없어 정량적 매칭 근거까지는
+   * 못 대더라도, 이 정도는 장소 데이터 없이 바로 반영할 수 있는 부분이라 먼저 붙인다. 성향값이
+   * 하나도 없으면(온보딩 전) 빈 문자열을 반환해서 그냥 언급 안 하게 한다.
+   */
+  private String buildPersonaStyleContext(User user) {
+    UserStyle style = userStyleRepository.findById(user.getId()).orElse(null);
+    if (style == null) return "";
+
+    Map<String, Integer> scores = new LinkedHashMap<>();
+    if (style.getInitEnergy() != null) scores.put("energy", style.getInitEnergy());
+    if (style.getInitImmersion() != null) scores.put("immersion", style.getInitImmersion());
+    if (style.getInitVibe() != null) scores.put("vibe", style.getInitVibe());
+    if (style.getInitAesthetic() != null) scores.put("aesthetic", style.getInitAesthetic());
+    if (style.getInitPacing() != null) scores.put("pacing", style.getInitPacing());
+    if (style.getInitDepth() != null) scores.put("depth", style.getInitDepth());
+    if (scores.isEmpty()) return "";
+
+    List<String> traits = scores.entrySet().stream()
+        .sorted((a, b) -> Math.abs(b.getValue() - 50) - Math.abs(a.getValue() - 50))
+        .limit(3)
+        .map(e -> e.getValue() >= 50 ? AXIS_HIGH_DESC.get(e.getKey()) : AXIS_LOW_DESC.get(e.getKey()))
+        .toList();
+
+    return "\n\n[시스템 제공 정보] 이 유저의 성향 참고 - " + String.join(", ", traits)
+        + ". 자연스럽게 대화하면서 이 취향에 맞게 추천하거나 공감해줘(성향을 그대로 읽어주듯 말하지는 마).";
+  }
 
   // AiChatMessageIntent.intentTag로 저장을 허용할 값 목록 - LLM이 프롬프트를 무시하고 엉뚱한
   // 문자열을 내놓을 수 있어서, 화이트리스트에 없는 값은 저장하지 않고 버린다.
@@ -165,12 +239,36 @@ public class AiChatServiceImpl implements AiChatService {
       사용자 메시지: "%s"
       """;
 
+  // 세션 제목 자동 요약용(2026-08-22 추가) - "{코치이름} 데이트 상담"이라는 똑같은 제목만 뜨던
+  // 문제를 고치려고, 첫 턴이 끝나면 그 대화 내용으로 짧은 제목을 만든다.
+  private static final String TITLE_PROMPT = """
+      다음은 사용자와 AI 데이트 코치의 대화 첫 turn이야. 이 대화 내용을 대표하는 아주 짧은 제목을
+      만들어줘. 설명이나 따옴표 없이 제목 텍스트만 출력해. 10자 내외로, 명사형으로 끝내고 마침표는
+      쓰지 마.
+
+      사용자: "%s"
+      AI: "%s"
+      """;
+
+  // 대화 중 후속 질문 추천용(2026-08-22 추가) - 사용자가 매번 처음부터 뭘 물어볼지 고민하지 않아도
+  // 되게, 방금 오간 대화에 자연스럽게 이어질 질문을 AI가 직접 골라서 클릭 한 번으로 보낼 수 있게 한다.
+  private static final String FOLLOWUP_PROMPT = """
+      다음은 AI 데이트 코치와 사용자가 방금 나눈 대화 한 턴이야. 이 흐름에 자연스럽게 이어질 만한
+      후속 질문을 "사용자 입장에서" 2~3개 만들어줘. 아래 형식의 JSON으로만 답해(다른 설명 없이):
+      {"followUps": ["질문1", "질문2", "질문3"]}
+      각 질문은 15자~25자 내외로 짧게, 사용자가 코치에게 물어볼 법한 자연스러운 말투로 써.
+
+      사용자: "%s"
+      AI: "%s"
+      """;
+
   private final AiChatSessionRepository aiChatSessionRepository;
   private final AiChatMessageRepository aiChatMessageRepository;
   private final AiChatMessageIntentRepository aiChatMessageIntentRepository;
   private final AiChatMessageScoreRepository aiChatMessageScoreRepository;
   private final WeatherService weatherService;
   private final PlaceRepository placeRepository;
+  private final UserStyleRepository userStyleRepository;
   private final ObjectMapper objectMapper;
   private final RestTemplate restTemplate = new RestTemplate();
 
@@ -197,6 +295,10 @@ public class AiChatServiceImpl implements AiChatService {
   @Override
   public AiChatMessage sendMessage(User user, Long sessionId, String userText, Double lat, Double lon) {
     AiChatSession session = getOwnedSession(user, sessionId);
+    // lastResponseId가 아직 없다는 건 이번이 이 세션의 첫 턴이라는 뜻 - "지난 대화 보기" 목록에
+    // 항상 "{코치이름} 데이트 상담"이라는 똑같은 제목만 뜨던 문제(2026-08-22 발견)를 고치려고,
+    // 첫 턴이 끝난 직후 대화 내용을 요약해서 진짜 제목으로 바꿔치기한다(챗GPT/제미나이와 동일한 패턴).
+    boolean isFirstTurn = session.getLastResponseId() == null;
 
     AiChatMessage userMessage = AiChatMessage.builder()
         .session(session)
@@ -210,7 +312,8 @@ public class AiChatServiceImpl implements AiChatService {
     // 상황 정보(현재 시각/날씨)는 대화 내용이 아니라 매 요청마다 새로 알려줘야 하는 값이라,
     // instructions로만 매번 새로 만들어 보낸다(대화 이력에는 안 쌓임). 근처 장소 목록은 더 이상
     // 여기서 미리 만들어 끼워 넣지 않고, AI가 필요할 때 search_nearby_places 도구를 직접 호출한다.
-    String instructions = PERSONA_SYSTEM_PROMPT + "\n\n" + buildContextMessage(lat, lon);
+    String instructions = resolvePersonaPrompt(user) + "\n\n" + buildContextMessage(lat, lon)
+        + buildPersonaStyleContext(user);
 
     // 지난 대화 전체를 다시 안 보내도 된다 - previous_response_id만 넘기면 OpenAI가 이어서 기억한다.
     ResponseApiResult result = requestResponse(userText, instructions, session.getLastResponseId(), lat, lon);
@@ -224,7 +327,27 @@ public class AiChatServiceImpl implements AiChatService {
     AiChatMessage saved = aiChatMessageRepository.save(aiMessage);
 
     session.setLastResponseId(result.responseId());
+    if (isFirstTurn) {
+      // 제목 요약이 실패해도(네트워크 오류, 파싱 실패 등) 방금 받은 실제 채팅 응답까지 날아가면
+      // 안 되니 analyzeMessage()와 동일하게 실패를 삼키고 로그만 남긴다.
+      try {
+        String summarizedTitle = requestTitleCompletion(userText, result.text());
+        if (summarizedTitle != null && !summarizedTitle.isBlank()) {
+          session.setTitle(summarizedTitle);
+        }
+      } catch (Exception e) {
+        log.warn("세션 제목 요약 실패 (sessionId={})", session.getId(), e);
+      }
+    }
     aiChatSessionRepository.save(session);
+
+    // 후속 질문 추천(2026-08-22 추가) - DB에는 안 남기고 이번 응답에만 실어 보낸다. 실패해도
+    // 실제 채팅 응답에는 영향 없게 analyzeMessage()와 동일하게 실패를 삼킨다.
+    try {
+      saved.setFollowUpQuestions(requestFollowUpQuestions(userText, result.text()));
+    } catch (Exception e) {
+      log.warn("후속 질문 추천 실패 (sessionId={})", session.getId(), e);
+    }
 
     return saved;
   }
@@ -234,6 +357,16 @@ public class AiChatServiceImpl implements AiChatService {
   public List<AiChatMessage> getMessages(User user, Long sessionId) {
     getOwnedSession(user, sessionId); // 소유권 검증(다른 유저의 세션이면 예외 발생)
     return aiChatMessageRepository.findBySession_IdOrderByCreatedAtAsc(sessionId);
+  }
+
+  /**
+   * "지난 대화 보기" 목록. 로그아웃 후 다른 브라우저/기기로 들어오면 프론트가 들고 있던
+   * localStorage의 마지막 세션 id를 못 찾는데, 그것과 무관하게 DB에 저장된 이 유저의 세션을
+   * 보여줘서 이어서 대화할 수 있게 한다(2026-08-22 추가). 세션이 계속 쌓일 걸 감안해 페이지네이션.
+   */
+  @Override
+  public Page<AiChatSession> listSessions(User user, Pageable pageable) {
+    return aiChatSessionRepository.findByUser_Id(user.getId(), pageable);
   }
 
   private AiChatSession getOwnedSession(User user, Long sessionId) {
@@ -349,18 +482,22 @@ public class AiChatServiceImpl implements AiChatService {
   }
 
   /**
-   * 분석 전용 OpenAI 호출. response_format을 json_object로 지정해서, 응답이 항상 파싱 가능한
-   * JSON 문자열로만 오도록 강제한다(안 그러면 모델이 자연어 설명을 섞어서 답할 수 있음).
+   * 분석/제목 요약/후속 질문 세 곳에서 거의 똑같은 "Chat Completions 호출해서 첫 응답 텍스트만
+   * 꺼내기" 보일러플레이트를 복붙하고 있었다(2026-08-22 발견) - 한 곳으로 모았다. jsonMode가
+   * true면 response_format을 json_object로 강제해서, 응답이 항상 파싱 가능한 JSON 문자열로만
+   * 오도록 한다(안 그러면 모델이 자연어 설명을 섞어서 답할 수 있음).
    */
-  private String requestAnalysisCompletion(String userText) {
+  private String requestChatCompletionText(String prompt, boolean jsonMode) {
     List<Map<String, String>> messages = List.of(
-        Map.of("role", "user", "content", ANALYSIS_PROMPT.formatted(userText))
+        Map.of("role", "user", "content", prompt)
     );
 
     Map<String, Object> requestBody = new LinkedHashMap<>();
     requestBody.put("model", MODEL);
     requestBody.put("messages", messages);
-    requestBody.put("response_format", Map.of("type", "json_object"));
+    if (jsonMode) {
+      requestBody.put("response_format", Map.of("type", "json_object"));
+    }
 
     HttpHeaders headers = new HttpHeaders();
     headers.setContentType(MediaType.APPLICATION_JSON);
@@ -377,6 +514,35 @@ public class AiChatServiceImpl implements AiChatService {
     Map<?, ?> firstChoice = (Map<?, ?>) choices.get(0);
     Map<?, ?> message = (Map<?, ?>) firstChoice.get("message");
     return (String) message.get("content");
+  }
+
+  /** 사용자 메시지 하나를 분석해서 의도/성향점수 JSON을 받아온다. */
+  private String requestAnalysisCompletion(String userText) {
+    return requestChatCompletionText(ANALYSIS_PROMPT.formatted(userText), true);
+  }
+
+  /**
+   * 세션 첫 턴을 요약해서 짧은 제목을 만든다. 순수 텍스트 응답이라 jsonMode는 false. 모델이
+   * 실수로 앞뒤에 따옴표를 붙이는 경우가 있어 마지막에 한 번 벗겨준다.
+   */
+  private String requestTitleCompletion(String userText, String aiText) {
+    String content = requestChatCompletionText(TITLE_PROMPT.formatted(userText, aiText), false);
+    if (content == null) return null;
+    return content.trim().replaceAll("^[\"']|[\"']$", "");
+  }
+
+  /** 방금 오간 대화 한 턴을 보고 후속 질문 2~3개를 뽑는다. */
+  private List<String> requestFollowUpQuestions(String userText, String aiText) {
+    String content = requestChatCompletionText(FOLLOWUP_PROMPT.formatted(userText, aiText), true);
+    if (content == null) return List.of();
+
+    JsonNode root = objectMapper.readTree(content);
+    List<String> followUps = new ArrayList<>();
+    for (JsonNode node : root.path("followUps")) {
+      String text = node.asText(null);
+      if (text != null && !text.isBlank()) followUps.add(text.trim());
+    }
+    return followUps;
   }
 
   /** requestResponse()의 반환값 - 답변 텍스트와, 다음 턴에 이어 보낼 응답 id를 함께 담는다. */

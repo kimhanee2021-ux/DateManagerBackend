@@ -3,6 +3,8 @@ package org.ict.datemanagerbackend.domain.aichat.service;
 import org.ict.datemanagerbackend.domain.aichat.entity.AiChatMessage;
 import org.ict.datemanagerbackend.domain.aichat.entity.AiChatSession;
 import org.ict.datemanagerbackend.domain.user.entity.User;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 
 import java.util.List;
 
@@ -15,4 +17,6 @@ public interface AiChatService {
   AiChatMessage sendMessage(User user, Long sessionId, String userText, Double lat, Double lon);
   // <<세션의 전체 메시지 이력(오래된 순)>>
   List<AiChatMessage> getMessages(User user, Long sessionId);
+  // <<"지난 대화 보기" 목록 - 이 유저의 세션을 페이지네이션해서 최신순으로>>
+  Page<AiChatSession> listSessions(User user, Pageable pageable);
 }
