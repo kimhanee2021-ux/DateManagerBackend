@@ -6,26 +6,38 @@ import org.ict.datemanagerbackend.domain.couple.entity.Couple;
 import org.ict.datemanagerbackend.domain.couple.repository.CoupleRepository;
 import org.ict.datemanagerbackend.domain.course.dto.CourseGroupCreateRequest;
 import org.ict.datemanagerbackend.domain.course.dto.CourseGroupResponse;
+import org.ict.datemanagerbackend.domain.course.dto.CourseGroupResponseWithCoords;
 import org.ict.datemanagerbackend.domain.course.entity.CourseGroup;
+import org.ict.datemanagerbackend.domain.course.entity.CourseItem;
 import org.ict.datemanagerbackend.domain.course.repository.CourseGroupRepository;
+import org.ict.datemanagerbackend.domain.course.repository.CourseItemRepository;
+import org.ict.datemanagerbackend.domain.place.entity.Place;
+import org.ict.datemanagerbackend.domain.place.repository.PlaceRepository;
 import org.ict.datemanagerbackend.domain.user.entity.User;
 import org.ict.datemanagerbackend.domain.user.repository.UserRepository;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
+import java.util.Map;
 import java.util.NoSuchElementException;
+import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 
 @Service
 @RequiredArgsConstructor
 public class CourseServiceImpl implements CourseService {
 
   private final CourseGroupRepository courseGroupRepository;
+  private final PlaceRepository placeRepository;
+  private final CourseItemRepository courseItemRepository;
   private final CoupleRepository coupleRepository;
   private final UserRepository userRepository;
 
   @Transactional
   @Override
   public CourseGroupResponse createCourseGroup(Long userId, CourseGroupCreateRequest request) {
+
+    //코스 그룹 생성 로직
     User user = userRepository.findById(userId).orElseThrow(() -> new NoSuchElementException("User Not Found"));
     Couple couple = null;
     if (request.coupleId() != null) {
@@ -36,14 +48,46 @@ public class CourseServiceImpl implements CourseService {
         .user(user)
         .couple(couple)
         .build();
-    courseGroupRepository.save(courseGroup);
-    return CourseGroupResponse.from(courseGroup);
+    //그룹 생성과 동시에 만들어진 레코드에서 id 저장
+    CourseGroup finalCourseGroup = courseGroupRepository.save(courseGroup);
+    //코스 아이템 생성 로직
+    List<CourseItem> courseItems = IntStream.range(0, request.placeIds().size()).mapToObj(i -> {
+      Long placeId = request.placeIds().get(i);
+      Place place = placeRepository.getReferenceById(placeId);
+
+      return CourseItem.builder().courseGroup(finalCourseGroup).place(place).sequence(i + 1).build();
+    }).toList();
+
+
+    courseItemRepository.saveAll(courseItems);
+
+
+    return CourseGroupResponse.from(finalCourseGroup);
   }
 
+  @Transactional
   @Override
-  public List<CourseGroupResponse> listMyCourseGroups(Long userId) {
-    return courseGroupRepository.findByUser_IdOrderByCreatedAtDesc(userId).stream()
-        .map(CourseGroupResponse::from)
-        .toList();
+  public List<CourseGroupResponseWithCoords> listMyCourseGroups(Long userId) {
+    User user = userRepository.findById(userId).orElseThrow(() -> new NoSuchElementException("User Not Found"));
+    List<CourseGroup> groups = courseGroupRepository.findCourseGroupsByUser(user);
+
+    if (groups.isEmpty()) {
+      return List.of();
+    }
+    List<Long> groupIds = groups.stream().map(CourseGroup::getId).toList();
+
+    List<CourseItem> allItems = courseItemRepository.findByCourseGroupIdInWithPlace(groupIds);
+
+    Map<Long, List<CourseItem>> itemsByGroupId = allItems.stream()
+        .collect(Collectors.groupingBy(item -> item.getCourseGroup().getId()));
+
+    return groups.stream()
+        .map(group -> CourseGroupResponseWithCoords.of(
+            group,
+            itemsByGroupId.getOrDefault(group.getId(), List.of())
+        )).toList();
+
   }
+
+
 }
