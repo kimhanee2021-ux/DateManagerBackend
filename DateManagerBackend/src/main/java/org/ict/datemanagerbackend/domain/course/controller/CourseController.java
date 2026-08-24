@@ -3,6 +3,7 @@ package org.ict.datemanagerbackend.domain.course.controller;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.ict.datemanagerbackend.domain.course.dto.CourseGroupCreateRequest;
+import org.ict.datemanagerbackend.domain.course.dto.CourseItemMoveRequest;
 import org.ict.datemanagerbackend.domain.course.dto.CourseGroupResponse;
 import org.ict.datemanagerbackend.domain.course.dto.CourseGroupResponseWithCoords;
 import org.ict.datemanagerbackend.domain.course.service.CourseService;
@@ -58,6 +59,17 @@ public class CourseController implements CourseApiDocs {
     List<CourseGroupResponseWithCoords> responses = courseService.listMyCourseGroups(userId);
 
     return ResponseEntity.ok(responses);
+  }
+
+  // 코스에 담긴 장소 순서를 한 칸 위/아래로 옮긴다(빌더 화면 순서 변경 화살표용).
+  @PatchMapping("/groups/{groupId}/items/{placeId}/move")
+  public ResponseEntity<Void> moveCourseItem(Authentication authentication,
+                                              @PathVariable Long groupId,
+                                              @PathVariable Long placeId,
+                                              @Valid @RequestBody CourseItemMoveRequest request) {
+    Long userId = (Long) authentication.getPrincipal();
+    courseService.moveCourseItem(userId, groupId, placeId, request.direction());
+    return ResponseEntity.noContent().build();
   }
 
 

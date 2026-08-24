@@ -11,6 +11,9 @@ import java.util.List;
 public interface CourseItemRepository extends JpaRepository<CourseItem,Long> {
   List<CourseItem> findAllByCourseGroup(CourseGroup courseGroup);
 
+  // 순서 변경(위/아래) 시 현재 순번대로 인접 아이템을 찾기 위한 조회
+  List<CourseItem> findByCourseGroup_IdOrderBySequenceAsc(Long courseGroupId);
+
   @Query("SELECT ci FROM CourseItem ci " +
       "JOIN FETCH ci.place " +
       "WHERE ci.courseGroup.id IN :groupIds " +

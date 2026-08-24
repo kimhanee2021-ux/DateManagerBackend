@@ -12,4 +12,6 @@ public interface CourseService {
 
   List<CourseGroupResponseWithCoords> listMyCourseGroups(Long userId);
 
+  void moveCourseItem(Long userId, Long groupId, Long placeId, String direction);
+
 }

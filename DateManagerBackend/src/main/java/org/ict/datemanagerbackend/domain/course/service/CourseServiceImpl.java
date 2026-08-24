@@ -89,5 +89,42 @@ public class CourseServiceImpl implements CourseService {
 
   }
 
+  // 코스 안에서 장소 순서를 한 칸 위/아래로 바꾼다. 프론트가 place.id를 식별자로 쓰고 있어서
+  // placeId 기준으로 대상을 찾는다(같은 코스 안에서는 place가 중복 담기지 않는다는 전제).
+  @Transactional
+  @Override
+  public void moveCourseItem(Long userId, Long groupId, Long placeId, String direction) {
+    CourseGroup group = courseGroupRepository.findById(groupId)
+        .orElseThrow(() -> new NoSuchElementException("Course Group Not Found"));
+
+    if (!group.getUser().getId().equals(userId)) {
+      throw new IllegalStateException("본인이 만든 코스만 수정할 수 있습니다");
+    }
+
+    List<CourseItem> items = courseItemRepository.findByCourseGroup_IdOrderBySequenceAsc(groupId);
+
+    int currentIndex = -1;
+    for (int i = 0; i < items.size(); i++) {
+      if (items.get(i).getPlace().getId().equals(placeId)) {
+        currentIndex = i;
+        break;
+      }
+    }
+    if (currentIndex == -1) {
+      throw new NoSuchElementException("Course Item Not Found");
+    }
+
+    int targetIndex = "up".equals(direction) ? currentIndex - 1 : currentIndex + 1;
+    if (targetIndex < 0 || targetIndex >= items.size()) {
+      return; // 이미 맨 위/맨 아래라 더 옮길 곳이 없음 - 아무것도 안 하고 조용히 끝낸다.
+    }
+
+    CourseItem current = items.get(currentIndex);
+    CourseItem target = items.get(targetIndex);
+    int tempSequence = current.getSequence();
+    current.setSequence(target.getSequence());
+    target.setSequence(tempSequence);
+  }
+
 
 }
