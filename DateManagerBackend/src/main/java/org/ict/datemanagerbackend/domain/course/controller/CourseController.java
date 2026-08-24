@@ -27,7 +27,7 @@ public class CourseController implements CourseApiDocs {
   // userId를 그대로 믿어서 아무 유저 id나 넣으면 남의 이름으로 코스그룹이 만들어지는 문제가 있었다.
 
   //반환값이 모호하여 유효성 검증을 지역 예외처리로 분리
-  @PostMapping("/group")
+  @PostMapping("/groups")
   public ResponseEntity<CourseGroupResponse> createCourseGroup(Authentication authentication,
                                                                @Valid @RequestBody CourseGroupCreateRequest request) {
     Long userId = (Long) authentication.getPrincipal();
