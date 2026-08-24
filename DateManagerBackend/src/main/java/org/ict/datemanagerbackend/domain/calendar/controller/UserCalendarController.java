@@ -43,7 +43,7 @@ public class UserCalendarController {
 
   @PostMapping
   public ResponseEntity<?> createUserCalendar(Authentication authentication,
-                                                                   @RequestBody UserCalendarCreateRequest userCalendarCreateRequest) {
+       @RequestBody UserCalendarCreateRequest userCalendarCreateRequest) {
     if (authentication == null) {
       return unauthorized();
     }
