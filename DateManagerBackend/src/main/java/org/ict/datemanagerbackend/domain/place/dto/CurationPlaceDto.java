@@ -51,9 +51,6 @@ public record CurationPlaceDto(
       PerformanceRanking ranking,
       PlaceStyle style
   ) {
-    // 리뷰 기반 개별 보정이 끝난 장소(reviewed=true)는 카테고리 공통값보다 그 장소 고유값을
-    // 우선한다 - PlaceMatchServiceImpl.resolvePlaceScores()와 동일한 우선순위(2026-08-25).
-    boolean useStyle = style != null && Boolean.TRUE.equals(style.getReviewed());
     return new CurationPlaceDto(
         place.getId(),
         place.getName(),
@@ -72,12 +69,12 @@ public record CurationPlaceDto(
         null,
         ranking != null ? ranking.getRankNo() : null,
         ranking != null ? ranking.getGenreName() : null,
-        useStyle ? style.getScoreEnergy() : (category != null ? category.getScoreEnergy() : (style != null ? style.getScoreEnergy() : null)),
-        useStyle ? style.getScoreImmersion() : (category != null ? category.getScoreImmersion() : (style != null ? style.getScoreImmersion() : null)),
-        useStyle ? style.getScoreVibe() : (category != null ? category.getScoreVibe() : (style != null ? style.getScoreVibe() : null)),
-        useStyle ? style.getScoreAesthetic() : (category != null ? category.getScoreAesthetic() : (style != null ? style.getScoreAesthetic() : null)),
-        useStyle ? style.getScoreDepth() : (category != null ? category.getScoreDepth() : (style != null ? style.getScoreDepth() : null)),
-        useStyle ? style.getScorePacing() : (category != null ? category.getScorePacing() : (style != null ? style.getScorePacing() : null))
+        category != null ? category.getScoreEnergy() : (style != null ? style.getScoreEnergy() : null),
+        category != null ? category.getScoreImmersion() : (style != null ? style.getScoreImmersion() : null),
+        category != null ? category.getScoreVibe() : (style != null ? style.getScoreVibe() : null),
+        category != null ? category.getScoreAesthetic() : (style != null ? style.getScoreAesthetic() : null),
+        category != null ? category.getScoreDepth() : (style != null ? style.getScoreDepth() : null),
+        category != null ? category.getScorePacing() : (style != null ? style.getScorePacing() : null)
     );
   }
 }

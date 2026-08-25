@@ -77,15 +77,9 @@ public class PlaceMatchServiceImpl implements PlaceMatchService {
     );
   }
 
-  // 리뷰 기반 개별 장소 점수 보정(2026-08-25) - place_styles가 리뷰 검색을 거쳐 실제로 채워진
-  // 장소(reviewed=true)는 그 개별값을 최우선으로 쓴다. 아직 리뷰 검토 전이면 예전처럼
-  // place_category(세부분류 공식) 공통값을 쓰고, 그것도 없으면 place_styles 중립값으로 폴백한다.
+  // 장소는 place_category(세부분류 공식)가 연결돼 있으면 그걸 우선 쓰고, 없으면 place_styles의
+  // 중립값을 쓴다 - PlaceCategory 엔티티의 설계 의도(2026-08-14) 그대로.
   private Scores resolvePlaceScores(Place place) {
-    PlaceStyle style = placeStyleRepository.findByPlace_Id(place.getId()).orElse(null);
-    if (style != null && Boolean.TRUE.equals(style.getReviewed())) {
-      return toScores(style);
-    }
-
     PlaceCategory category = place.getPlaceCategory();
     if (category != null) {
       return new Scores(
@@ -97,7 +91,9 @@ public class PlaceMatchServiceImpl implements PlaceMatchService {
       );
     }
 
-    return style != null ? toScores(style) : Scores.NEUTRAL;
+    return placeStyleRepository.findByPlace_Id(place.getId())
+        .map(this::toScores)
+        .orElse(Scores.NEUTRAL);
   }
 
   private Scores toScores(PlaceStyle style) {

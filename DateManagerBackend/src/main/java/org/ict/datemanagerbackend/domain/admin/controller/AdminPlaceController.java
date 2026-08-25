@@ -3,7 +3,6 @@ package org.ict.datemanagerbackend.domain.admin.controller;
 import org.ict.datemanagerbackend.domain.admin.service.AdminAuthService;
 import org.ict.datemanagerbackend.domain.admin.service.AdminPlaceService;
 import org.ict.datemanagerbackend.domain.place.dto.PlaceDumpDto;
-import org.ict.datemanagerbackend.domain.place.service.PlaceReviewScoringService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -23,13 +22,10 @@ public class AdminPlaceController {
 
   private final AdminAuthService adminAuthService;
   private final AdminPlaceService adminPlaceService;
-  private final PlaceReviewScoringService placeReviewScoringService;
 
-  public AdminPlaceController(AdminAuthService adminAuthService, AdminPlaceService adminPlaceService,
-                               PlaceReviewScoringService placeReviewScoringService) {
+  public AdminPlaceController(AdminAuthService adminAuthService, AdminPlaceService adminPlaceService) {
     this.adminAuthService = adminAuthService;
     this.adminPlaceService = adminPlaceService;
-    this.placeReviewScoringService = placeReviewScoringService;
   }
 
   // 장소 데이터 동기화는 원래 매일 새벽에 자동(@Scheduled)으로만 도는데, 개발 중 수동으로
@@ -161,23 +157,6 @@ public class AdminPlaceController {
       return ResponseEntity.status(403).body(Map.of("error", "관리자만 접근할 수 있습니다"));
     }
     return ResponseEntity.ok(adminPlaceService.importPlaceCategoryLinksCsv(csv));
-  }
-
-  // 리뷰 기반 장소별 점수 보정 파일럿(2026-08-25) - 지정한 장소 id들만 OpenAI web_search로 리뷰를
-  // 찾아 점수/평점/사진을 채운다. 비용이 드는 외부 호출이라 자동으로 대상을 고르지 않고, 관리자가
-  // 직접 고른 장소 id 목록만 받는다.
-  @PostMapping("/review-pilot")
-  public ResponseEntity<?> runPlaceReviewPilot(Authentication authentication, @RequestBody List<Long> placeIds) {
-    if (!adminAuthService.isAdmin(authentication)) {
-      return ResponseEntity.status(403).body(Map.of("error", "관리자만 접근할 수 있습니다"));
-    }
-    if (placeIds == null || placeIds.isEmpty()) {
-      return ResponseEntity.badRequest().body(Map.of("error", "placeIds가 비어있습니다"));
-    }
-    if (placeIds.size() > 50) {
-      return ResponseEntity.badRequest().body(Map.of("error", "파일럿은 한 번에 50개까지만 가능합니다"));
-    }
-    return ResponseEntity.ok(placeReviewScoringService.runReviewPilot(placeIds));
   }
 
   @GetMapping("/sync-status")

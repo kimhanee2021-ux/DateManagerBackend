@@ -51,9 +51,6 @@ public record PlaceResponseDto(
   // 필요해서 큐레이션 DTO처럼 PerformanceRanking을 선택적으로 받는 오버로드를 추가함(2026-08-19).
   public static PlaceResponseDto from(Place place, PlaceStyle style, PerformanceRanking ranking) {
     PlaceCategory category = place.getPlaceCategory();
-    // 리뷰 기반 개별 보정이 끝난 장소(reviewed=true)는 카테고리 공통값보다 그 장소 고유값을
-    // 우선한다 - PlaceMatchServiceImpl.resolvePlaceScores()와 동일한 우선순위(2026-08-25).
-    boolean useStyle = style != null && Boolean.TRUE.equals(style.getReviewed());
     return new PlaceResponseDto(
         place.getId(),
         place.getName(),
@@ -62,11 +59,11 @@ public record PlaceResponseDto(
         place.getLatitude(),
         place.getLongitude(),
         place.getImageUrl(),
-        useStyle ? style.getScoreEnergy() : (category != null ? category.getScoreEnergy() : (style != null ? style.getScoreEnergy() : null)),
-        useStyle ? style.getScoreImmersion() : (category != null ? category.getScoreImmersion() : (style != null ? style.getScoreImmersion() : null)),
-        useStyle ? style.getScoreVibe() : (category != null ? category.getScoreVibe() : (style != null ? style.getScoreVibe() : null)),
-        useStyle ? style.getScoreAesthetic() : (category != null ? category.getScoreAesthetic() : (style != null ? style.getScoreAesthetic() : null)),
-        useStyle ? style.getScoreDepth() : (category != null ? category.getScoreDepth() : (style != null ? style.getScoreDepth() : null)),
+        category != null ? category.getScoreEnergy() : (style != null ? style.getScoreEnergy() : null),
+        category != null ? category.getScoreImmersion() : (style != null ? style.getScoreImmersion() : null),
+        category != null ? category.getScoreVibe() : (style != null ? style.getScoreVibe() : null),
+        category != null ? category.getScoreAesthetic() : (style != null ? style.getScoreAesthetic() : null),
+        category != null ? category.getScoreDepth() : (style != null ? style.getScoreDepth() : null),
         style != null ? style.getIsIndoor() : null,
         style != null ? style.getIsActivity() : null,
         place.getStartDate(),
