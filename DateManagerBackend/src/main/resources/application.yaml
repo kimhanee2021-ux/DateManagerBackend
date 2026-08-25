@@ -71,6 +71,21 @@ spring:
         one-indexed-parameters: true #pageable index에서 자동으로 1을 빼기위한 설정(예: ?page=3요청시 pagebale index는 2
         page-parameter: page #page 파라미터변경(기본값:page)
 
+  #프로필 사진 업로드(POST /api/me/photo) 크기 제한 - 명시적으로 안 정해두면 스프링 부트 기본값(1MB)이
+  #그대로 적용돼서, ProfileImageServiceImpl이 5MB까지 허용한다고 검증하기도 전에 스프링 멀티파트
+  #파서 단계에서 먼저 413으로 막혀버린다(2026-08-25 발견 - 팀원들 실제 사진 업로드는 다 413 실패,
+  #본인은 수 바이트짜리 테스트 파일로만 확인해서 못 잡았던 버그). ProfileImageServiceImpl의
+  #5MB 기준과 맞춰서 여기도 5MB로 올려둔다.
+  servlet:
+    multipart:
+      max-file-size: 5MB
+      max-request-size: 5MB
+      # 기본값(false)이면 DispatcherServlet에 요청이 도달하기도 전에 서블릿 필터 단계에서
+      # 멀티파트를 미리 파싱하다가 크기 초과 예외가 나서, 컨트롤러의 @ExceptionHandler가 못
+      # 잡고 스프링/톰캣 기본 에러 페이지가 그대로 노출된다. true로 두면 컨트롤러 메서드
+      # 진입 시점(MultipartFile 파라미터 resolve 시)까지 파싱을 미뤄서 정상적으로 잡힌다.
+      resolve-lazily: true
+
   #비밀번호 찾기(재설정) 메일 발송용 SMTP 설정 - PASS/문자 인증은 유료라 보류하고 Gmail 앱 비밀번호로
   #무료 발송하는 방식을 채택했다. username/password는 발송 전용 지메일 계정 + 앱 비밀번호.
   mail:

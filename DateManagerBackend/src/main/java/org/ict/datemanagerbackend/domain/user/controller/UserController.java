@@ -9,6 +9,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
@@ -16,6 +17,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.time.LocalDateTime;
@@ -123,6 +125,15 @@ public class UserController {
         user.setProfileImageUrl(url);
         userRepository.save(user);
         return ResponseEntity.ok(toResponse(user));
+    }
+
+    // application.yaml의 spring.servlet.multipart.max-file-size(5MB)를 넘는 파일을 올리면
+    // 이 컨트롤러 코드(profileImageService.validate())에 닿기도 전에 스프링 멀티파트 파서가
+    // 먼저 이 예외를 던진다 - 안 잡아두면 스프링 기본 에러 페이지(whitelabel)가 그대로 노출돼서
+    // 다른 API들의 JSON 에러 형식과 어긋난다.
+    @ExceptionHandler(MaxUploadSizeExceededException.class)
+    public ResponseEntity<?> handleMaxUploadSize() {
+        return ResponseEntity.status(413).body(Map.of("error", "파일 크기는 5MB를 넘을 수 없어요"));
     }
 
     // 회원 자진 탈퇴. 관리자의 강제 탈퇴(AdminController.deleteUser)와 동일하게 실제 row는 지우지 않고
