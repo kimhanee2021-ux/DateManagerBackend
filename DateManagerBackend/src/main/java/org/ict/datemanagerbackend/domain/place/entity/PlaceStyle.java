@@ -88,4 +88,26 @@ public class PlaceStyle {
   @Column(name = "updated_at", nullable = false, updatable = false)
   private LocalDateTime updatedAt = LocalDateTime.now(); // 수정 일시
 
+  // 리뷰 기반 장소별 점수 보정(2026-08-25 착수) - place_category가 연결된 장소는 원래 카테고리
+  // 공통값을 그대로 썼는데(PlaceMatchServiceImpl.resolvePlaceScores), 같은 세부분류라도 실제
+  // 장소마다 다르다는 요구로 개별 리뷰 검색을 거쳐 이 행이 실제로 채워지면(reviewed=true) 그때부터
+  // 카테고리 공통값보다 이 행을 우선한다. false인 동안은 지금처럼 카테고리 값이 그대로 쓰인다.
+  // nullable=false를 안 쓰는 이유는 위 scorePacing과 동일 - place_styles에 이미 4만여 행이 있는
+  // 상태에서 ddl-auto가 NOT NULL로 컬럼을 추가하면 오라클이 ORA-01758로 거부한다(2026-08-25,
+  // 실제로 이 실수를 했다가 백엔드가 기동 실패해서 확인함).
+  @Setter
+  @Builder.Default
+  @Column(name = "reviewed")
+  private Boolean reviewed = false;
+
+  // 리뷰 검색 결과를 요약한 값이라 정확한 실측치가 아니라 AI가 웹 검색 스니펫에서 종합 추정한
+  // 값이다(참고용) - 5점 만점.
+  @Setter
+  @Column(name = "rating")
+  private Double rating;
+
+  @Setter
+  @Column(name = "review_count")
+  private Integer reviewCount;
+
 }

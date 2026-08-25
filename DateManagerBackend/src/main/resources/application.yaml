@@ -100,7 +100,7 @@ spring:
         secret-key: ${S3_SECRET_KEY} # AWS에서 발급받은 Secret Key
       region: ap-northeast-2 # 서울 리전 기준
       s3:
-        bucket: datemanager-profile-images # 생성한 S3 버킷 이름 (팀원이 프로필 사진 업로드 기능에 이미 연동해서 쓰던 버킷)
+        bucket: datemanager-profile-images-jaehyun # 기존 버킷 IAM 권한 문제(403)로 새로 만든 버킷(2026-08-25)
 
   #JWT 토큰 비밀키 및 만료시간 설정(키는 임의명)
   #-비밀 키(JSON WEB TOKEN 해쉬 및 서명 확인에 사용)
