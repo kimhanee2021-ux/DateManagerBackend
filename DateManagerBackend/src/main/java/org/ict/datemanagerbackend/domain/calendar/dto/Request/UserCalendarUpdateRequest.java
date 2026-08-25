@@ -14,5 +14,6 @@ public class UserCalendarUpdateRequest {
   String description;
   LocalDate targetDate;
   Long courseGroupId;
+  boolean coupleEvent;
 }
 

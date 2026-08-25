@@ -22,6 +22,12 @@ public interface PlaceRepository extends JpaRepository<Place, Long> {
   // 큐레이션/코스빌더에서 카테고리(맛집, 숙박 등)별로 장소를 페이지 단위 조회할 때 사용.
   Page<Place> findByCategory(String category, Pageable pageable);
 
+  // "AI 코스 추천" 반경 필터용(2026-08-25 추가) - 사각형(위경도 범위)으로 1차로 넉넉히 추린 뒤,
+  // 서비스 레이어에서 haversine으로 정확한 원형 반경만 다시 거른다. (latitude, longitude) 복합
+  // 인덱스(idx_places_lat_lng)가 이미 있어서 이 조건으로도 빠르다.
+  List<Place> findByLatitudeBetweenAndLongitudeBetween(
+      Double minLat, Double maxLat, Double minLon, Double maxLon, Pageable pageable);
+
   // 큐레이션 탭(데이트/숙박) 조회용 - 카테고리/세부분류/지역/이름검색을 전부 선택적으로 조합한다.
   // 카테고리가 있을 때(있어야만 하는) 버전과 없을 때 버전 2개로 나눴다 - "category IN :list"에
   // 빈 리스트를 넘기면 Hibernate가 예외를 던지기 때문에, 카테고리 자체가 없는 경우까지 억지로

@@ -19,8 +19,9 @@ public interface AiChatService {
   List<AiChatMessage> getMessages(User user, Long sessionId);
   // <<"지난 대화 보기" 목록 - 이 유저의 세션을 페이지네이션해서 최신순으로>>
   Page<AiChatSession> listSessions(User user, Pageable pageable);
-  // <<유저 성향값 기준으로 후보 장소를 추리고, OpenAI가 그중 코스로 묶을 곳을 골라 이유와 함께 반환>>
-  List<org.ict.datemanagerbackend.domain.aichat.dto.CourseRecommendationDto> recommendCourse(User user);
+  // <<유저 성향값 기준으로 후보 장소를 추리고, OpenAI가 그중 코스로 묶을 곳을 골라 이유와 함께 반환.
+  //   lat/lon이 있으면 반경 10km 이내로만 추천(2026-08-25), 없으면 지역 필터 없이 예전 방식>>
+  List<org.ict.datemanagerbackend.domain.aichat.dto.CourseRecommendationDto> recommendCourse(User user, Double lat, Double lon);
   // <<저장만 되고 안 쓰이던 의도 태그를 집계해서 가장 많이 나온 것 1개 반환(없으면 null)>>
   org.ict.datemanagerbackend.domain.aichat.dto.IntentSummaryDto getIntentSummary(User user);
   // <<관리자 페이지 - 처리 대기 중인 신고 사유 목록을 받아 한눈에 볼 수 있게 요약>>

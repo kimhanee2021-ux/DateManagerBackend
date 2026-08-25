@@ -7,11 +7,16 @@ import org.ict.datemanagerbackend.domain.calendar.dto.Request.UserCalendarUpdate
 import org.ict.datemanagerbackend.domain.calendar.dto.Response.UserCalendarResponse;
 import org.ict.datemanagerbackend.domain.calendar.entity.UserCalendar;
 import org.ict.datemanagerbackend.domain.calendar.repository.UserCalendarRepository;
+import org.ict.datemanagerbackend.domain.couple.entity.Couple;
+import org.ict.datemanagerbackend.domain.couple.entity.CoupleMember;
+import org.ict.datemanagerbackend.domain.couple.repository.CoupleMemberRepository;
 import org.ict.datemanagerbackend.domain.user.entity.User;
 import org.ict.datemanagerbackend.domain.user.repository.UserRepository;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDate;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.NoSuchElementException;
 
@@ -22,6 +27,15 @@ public class UserCalendarServiceImpl implements UserCalendarService{
 
 private final UserCalendarRepository userCalendarRepository;
 private final UserRepository userRepository;
+private final CoupleMemberRepository coupleMemberRepository;
+
+  // CourseServiceImpl과 동일한 패턴 - 요청 바디의 coupleId를 그대로 믿지 않고, 지금 이 유저가
+  // 실제로 속해있는 활성 커플을 서버가 직접 찾아서 쓴다(2026-08-25).
+  private Couple findMyActiveCouple(Long userId) {
+    return coupleMemberRepository.findByUser_IdAndLeftAtIsNull(userId)
+        .map(CoupleMember::getCouple)
+        .orElse(null);
+  }
 
   @Override
   public UserCalendarResponse createUserCalendar(Long userId, UserCalendarCreateRequest request) {
@@ -32,6 +46,10 @@ private final UserRepository userRepository;
     calendar.setDescription(request.getDescription());
     calendar.setTargetDate(request.getTargetDate());
     calendar.setCourseGroupId(request.getCourseGroupId());
+    if (request.isCoupleEvent()) {
+      Couple couple = findMyActiveCouple(userId);
+      calendar.setCoupleId(couple != null ? couple.getId() : null);
+    }
     //위에 엔티티 저장(userid 생성)
     UserCalendar saved = userCalendarRepository.save(calendar);
 
@@ -42,15 +60,19 @@ private final UserRepository userRepository;
         .targetDate(saved.getTargetDate())
         .courseGroupId(saved.getCourseGroupId())
         .createdAt(saved.getCreatedAt())
+        .coupleEvent(saved.getCoupleId() != null)
+        .mine(true)
         .build();
     return response;
   }
 
   @Override
   public List<UserCalendarResponse> getMonthlyCalendars(Long userId, LocalDate start, LocalDate end) {
-    List<UserCalendar> calendars = userCalendarRepository.findByUserIdAndTargetDateBetween(userId,start,end);
+    Couple couple = findMyActiveCouple(userId);
+    Long coupleId = couple != null ? couple.getId() : null;
+    List<UserCalendar> calendars = userCalendarRepository.findVisibleCalendars(userId, coupleId, start, end);
 
-    return calendars.stream()
+    List<UserCalendarResponse> result = new ArrayList<>(calendars.stream()
         .map(calendar -> UserCalendarResponse.builder()
             .id(calendar.getId())
             .title(calendar.getTitle())
@@ -58,8 +80,39 @@ private final UserRepository userRepository;
             .courseGroupId(calendar.getCourseGroupId())
             .targetDate(calendar.getTargetDate())
             .createdAt(calendar.getCreatedAt())
+            .coupleEvent(calendar.getCoupleId() != null)
+            .mine(calendar.getUser().getId().equals(userId))
             .build())
-        .toList();
+        .toList());
+
+    result.addAll(buildAnniversaryEntries(couple, start, end));
+    result.sort(Comparator.comparing(UserCalendarResponse::getTargetDate));
+    return result;
+  }
+
+  // 커플이 등록한 "만나기 시작한 날"(Couple.metDate) 기준 100일 단위 기념일을 조회 범위 안에서
+  // 계산해서 가상 일정으로 끼워 넣는다(2026-08-25 추가) - DB에 저장하지 않고 조회할 때마다
+  // 계산만 하므로, 나중에 metDate가 수정돼도 자동으로 다시 맞는 날짜가 나온다.
+  private List<UserCalendarResponse> buildAnniversaryEntries(Couple couple, LocalDate start, LocalDate end) {
+    List<UserCalendarResponse> anniversaries = new ArrayList<>();
+    if (couple == null || couple.getMetDate() == null) {
+      return anniversaries;
+    }
+    LocalDate metDate = couple.getMetDate();
+    for (int n = 1; n <= 50; n++) {
+      LocalDate anniversaryDate = metDate.plusDays(n * 100L);
+      if (anniversaryDate.isAfter(end)) break;
+      if (!anniversaryDate.isBefore(start)) {
+        anniversaries.add(UserCalendarResponse.builder()
+            .id(-(n * 100L)) // 실제 캘린더 id(양수)와 안 겹치게 음수를 씀 - DB row가 아니라는 표시
+            .title("💍 만난 지 " + (n * 100) + "일")
+            .targetDate(anniversaryDate)
+            .coupleEvent(true)
+            .anniversary(true)
+            .build());
+      }
+    }
+    return anniversaries;
   }
 
   @Override
@@ -73,6 +126,12 @@ private final UserRepository userRepository;
     calendar.setDescription(request.getDescription());
     calendar.setTargetDate(request.getTargetDate());
     calendar.setCourseGroupId(request.getCourseGroupId());
+    if (request.isCoupleEvent()) {
+      Couple couple = findMyActiveCouple(userId);
+      calendar.setCoupleId(couple != null ? couple.getId() : null);
+    } else {
+      calendar.setCoupleId(null);
+    }
     UserCalendar saved =  userCalendarRepository.save(calendar);
 
     UserCalendarResponse updateCalendar = UserCalendarResponse.builder()
@@ -82,6 +141,8 @@ private final UserRepository userRepository;
         .description(saved.getDescription())
         .targetDate(saved.getTargetDate())
         .courseGroupId(saved.getCourseGroupId())
+        .coupleEvent(saved.getCoupleId() != null)
+        .mine(true)
         .build();
     System.out.println("업데이트가 완료되었습니다.");
     return updateCalendar;

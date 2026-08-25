@@ -44,6 +44,13 @@ public class UserCalendar {
   @Column(name = "course_group_id")
   private Long courseGroupId;
 
+  // "커플 일정으로 등록" 체크박스(2026-08-25 추가) - null이면 작성자 본인만 보는 개인 일정,
+  // 값이 있으면(작성 시점 본인이 속한 커플 id) 파트너도 같이 볼 수 있는 커플 일정.
+  // CourseGroup처럼 연관관계 엔티티로 만들 수도 있었지만, 이 엔티티가 courseGroupId도 이미
+  // 연관관계 없이 순수 Long으로 들고 있어서(위 필드) 같은 스타일로 통일했다.
+  @Column(name = "couple_id")
+  private Long coupleId;
+
   @Column(nullable = false,insertable = false,updatable = false,name = "CREATED_AT")
   @ColumnDefault("SYSTIMESTAMP")
   private LocalDateTime createdAt;
