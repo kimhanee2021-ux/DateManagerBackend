@@ -14,4 +14,6 @@ public interface CourseService {
 
   void moveCourseItem(Long userId, Long groupId, Long placeId, String direction);
 
+  void deleteCourseGroup(Long userId, Long groupId);
+
 }

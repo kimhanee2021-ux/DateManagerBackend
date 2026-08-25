@@ -72,6 +72,15 @@ public class CourseController implements CourseApiDocs {
     return ResponseEntity.noContent().build();
   }
 
+  // 등록한 코스 삭제(2026-08-25 추가) - 빌더 화면 상세보기의 삭제 버튼용.
+  @DeleteMapping("/groups/{groupId}")
+  public ResponseEntity<Void> deleteCourseGroup(Authentication authentication,
+                                                 @PathVariable Long groupId) {
+    Long userId = (Long) authentication.getPrincipal();
+    courseService.deleteCourseGroup(userId, groupId);
+    return ResponseEntity.noContent().build();
+  }
+
 
 
 

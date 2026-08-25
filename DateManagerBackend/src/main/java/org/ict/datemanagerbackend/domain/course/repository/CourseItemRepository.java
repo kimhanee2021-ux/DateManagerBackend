@@ -14,6 +14,10 @@ public interface CourseItemRepository extends JpaRepository<CourseItem,Long> {
   // 순서 변경(위/아래) 시 현재 순번대로 인접 아이템을 찾기 위한 조회
   List<CourseItem> findByCourseGroup_IdOrderBySequenceAsc(Long courseGroupId);
 
+  // 코스 그룹 삭제 시 먼저 지워야 하는 소속 아이템들 - course_items.course_group_id에
+  // ON DELETE CASCADE가 없어서, 그룹만 지우면 FK 제약 위반이 난다.
+  void deleteByCourseGroup_Id(Long courseGroupId);
+
   @Query("SELECT ci FROM CourseItem ci " +
       "JOIN FETCH ci.place " +
       "WHERE ci.courseGroup.id IN :groupIds " +

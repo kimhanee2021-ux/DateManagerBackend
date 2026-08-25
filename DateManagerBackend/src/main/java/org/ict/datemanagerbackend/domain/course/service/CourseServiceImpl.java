@@ -3,6 +3,8 @@ package org.ict.datemanagerbackend.domain.course.service;
 import jakarta.transaction.Transactional;
 import lombok.RequiredArgsConstructor;
 import org.ict.datemanagerbackend.domain.couple.entity.Couple;
+import org.ict.datemanagerbackend.domain.couple.entity.CoupleMember;
+import org.ict.datemanagerbackend.domain.couple.repository.CoupleMemberRepository;
 import org.ict.datemanagerbackend.domain.couple.repository.CoupleRepository;
 import org.ict.datemanagerbackend.domain.course.dto.CourseGroupCreateRequest;
 import org.ict.datemanagerbackend.domain.course.dto.CourseGroupResponse;
@@ -31,6 +33,7 @@ public class CourseServiceImpl implements CourseService {
   private final PlaceRepository placeRepository;
   private final CourseItemRepository courseItemRepository;
   private final CoupleRepository coupleRepository;
+  private final CoupleMemberRepository coupleMemberRepository;
   private final UserRepository userRepository;
 
   @Transactional
@@ -39,10 +42,12 @@ public class CourseServiceImpl implements CourseService {
 
     //코스 그룹 생성 로직
     User user = userRepository.findById(userId).orElseThrow(() -> new NoSuchElementException("User Not Found"));
-    Couple couple = null;
-    if (request.coupleId() != null) {
-      couple = coupleRepository.findById(request.coupleId()).orElseThrow(() -> new NoSuchElementException("Couple Not Found"));
-    }
+    // coupleId는 요청 body가 아니라 내 활성 커플 멤버십에서 직접 찾는다(2026-08-25) - 클라이언트가
+    // 보내는 값을 그대로 믿지 않는 기존 보안 원칙(userId와 동일)과, 커플로 연결돼 있으면 자동으로
+    // 코스가 공유돼야 한다는 요구사항을 같이 만족시킨다.
+    Couple couple = coupleMemberRepository.findByUser_IdAndLeftAtIsNull(userId)
+        .map(CoupleMember::getCouple)
+        .orElse(null);
     CourseGroup courseGroup = CourseGroup.builder()
         .title(request.title())
         .user(user)
@@ -68,8 +73,16 @@ public class CourseServiceImpl implements CourseService {
   @Transactional
   @Override
   public List<CourseGroupResponseWithCoords> listMyCourseGroups(Long userId) {
-    User user = userRepository.findById(userId).orElseThrow(() -> new NoSuchElementException("User Not Found"));
-    List<CourseGroup> groups = courseGroupRepository.findCourseGroupsByUser(user);
+    if (!userRepository.existsById(userId)) {
+      throw new NoSuchElementException("User Not Found");
+    }
+    // 내가 만든 코스뿐 아니라, 지금 연결된 커플이 있으면 파트너가 만든 코스도 같이 보여준다
+    // (2026-08-25) - CourseGroup에 couple 필드가 있었는데도 조회는 user 기준으로만 돼있어서
+    // 커플끼리 서로 만든 코스를 못 보던 문제.
+    Long coupleId = coupleMemberRepository.findByUser_IdAndLeftAtIsNull(userId)
+        .map(member -> member.getCouple().getId())
+        .orElse(null);
+    List<CourseGroup> groups = courseGroupRepository.findByUser_IdOrCouple_Id(userId, coupleId);
 
     if (groups.isEmpty()) {
       return List.of();
@@ -139,5 +152,20 @@ public class CourseServiceImpl implements CourseService {
     current.setSequence(targetSequence);
   }
 
+  // 등록된 코스 삭제(2026-08-25 추가) - course_items에 FK가 걸려있어서 그룹보다 먼저
+  // 소속 아이템부터 지워야 한다.
+  @Transactional
+  @Override
+  public void deleteCourseGroup(Long userId, Long groupId) {
+    CourseGroup group = courseGroupRepository.findById(groupId)
+        .orElseThrow(() -> new NoSuchElementException("Course Group Not Found"));
+
+    if (!group.getUser().getId().equals(userId)) {
+      throw new IllegalStateException("본인이 만든 코스만 삭제할 수 있습니다");
+    }
+
+    courseItemRepository.deleteByCourseGroup_Id(groupId);
+    courseGroupRepository.delete(group);
+  }
 
 }
