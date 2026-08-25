@@ -270,6 +270,29 @@ public class AiChatServiceImpl implements AiChatService {
       AI: "%s"
       """;
 
+  // "AI 코스 추천"(홈탭 배너, 2026-08-25 추가)용 - 매칭점수 상위 후보를 우리가 먼저 추려서 주고,
+  // 그중 실제로 코스로 묶을 4곳만 AI가 고르게 한다(전체 장소 중에서 AI가 직접 고르게 하면 존재하지
+  // 않는 장소를 지어낼 위험이 있어서, 반드시 후보 목록 안에서만 고르도록 프롬프트로 제한한다).
+  private static final String COURSE_RECOMMENDATION_PROMPT = """
+      아래는 사용자의 성향값(6개 축, 0~100)과 후보 장소 목록이야. 이 사용자 성향에 가장 잘 어울리는
+      "하루 데이트 코스"로 묶을 장소 4곳을 후보 목록 "안에서만" 골라줘. 아래 형식의 JSON으로만 답해
+      (다른 설명 없이):
+      {"picks": [{"id": 123, "reason": "왜 이 장소를 골랐는지 20자 내외 한 줄"}]}
+
+      규칙:
+      - 반드시 4곳을 고르고, id는 후보 목록에 있는 값만 사용해(후보에 없는 id를 지어내지 마).
+      - 하루 동안 실제로 돌아다닐 수 있는 코스여야 해 - 같은 시/도(주소 앞부분)에 있는 곳 위주로
+        고르고, 서로 다른 지역(예: 서울과 제주)을 섞지 마.
+      - category가 겹치지 않게 최대한 다양하게 골라줘(같은 category만 4곳 고르지 마. 예: 콘서트
+        4개처럼).
+
+      [사용자 성향]
+      %s
+
+      [후보 장소 목록]
+      %s
+      """;
+
   private final AiChatSessionRepository aiChatSessionRepository;
   private final AiChatMessageRepository aiChatMessageRepository;
   private final AiChatMessageIntentRepository aiChatMessageIntentRepository;
@@ -561,6 +584,130 @@ public class AiChatServiceImpl implements AiChatService {
       if (text != null && !text.isBlank()) followUps.add(text.trim());
     }
     return followUps;
+  }
+
+  /**
+   * "AI 코스 추천" - 유저 성향값과 6개 축 거리가 가까운 장소를 우리 쪽에서 먼저 15곳으로 추리고
+   * (매칭점수 계산은 프론트 placeMatching.js의 pickMatchingAxes와 같은 방식을 서버에서 장소 단위로
+   * 적용한 것), 그중 4곳을 OpenAI가 코스로 묶어 고르게 한다. OpenAI 호출/파싱이 실패하면 매칭점수
+   * 상위 4곳으로 조용히 대체한다(챗봇의 다른 부가 기능들과 같은 원칙 - 실패해도 화면이 비면 안 됨).
+   */
+  @Override
+  public List<org.ict.datemanagerbackend.domain.aichat.dto.CourseRecommendationDto> recommendCourse(User user) {
+    org.ict.datemanagerbackend.domain.user.entity.UserStyle style =
+        userStyleRepository.findById(user.getId()).orElse(null);
+
+    Map<String, Integer> userScores = new LinkedHashMap<>();
+    userScores.put("energy", styleAxisOrDefault(style == null ? null : style.getInitEnergy()));
+    userScores.put("immersion", styleAxisOrDefault(style == null ? null : style.getInitImmersion()));
+    userScores.put("vibe", styleAxisOrDefault(style == null ? null : style.getInitVibe()));
+    userScores.put("aesthetic", styleAxisOrDefault(style == null ? null : style.getInitAesthetic()));
+    userScores.put("depth", styleAxisOrDefault(style == null ? null : style.getInitDepth()));
+    userScores.put("pacing", styleAxisOrDefault(style == null ? null : style.getInitPacing()));
+
+    // 카테고리별로 나눠서 후보를 모은다(2026-08-25) - searchAll로 최신 id 순 150개를 통째로 가져오면
+    // 한 카테고리(예: 콘서트 임포트 배치)가 몰려서 매칭점수 상위가 전부 같은 카테고리로 쏠리는 문제가
+    // 있었다("코스 추천이 콘서트 4개만 골라줌" - 실사용 테스트로 발견). 데이트 코스로 하루에 돌 만한
+    // 카테고리 위주로 나눠 모아서, 후보 풀 자체에 다양성을 만들어둔다.
+    List<Place> pool = new ArrayList<>();
+    org.springframework.data.domain.Sort byIdDesc =
+        org.springframework.data.domain.Sort.by(org.springframework.data.domain.Sort.Direction.DESC, "id");
+    for (String category : List.of("맛집", "전시", "박물관·미술관", "관광지", "액티비티", "쇼핑")) {
+      pool.addAll(placeRepository.searchByCategoryIn(
+          CATEGORY_ALIASES.get(category), null, "", null, null, null, null, false, false, null,
+          org.springframework.data.domain.PageRequest.of(0, 20, byIdDesc)).getContent());
+    }
+    // 공연/숙박은 코스 하나를 통째로 채우면 안 되는 성격이라(시간 고정, 숙박은 마지막 한 곳) 적게만 섞는다.
+    for (String category : List.of("공연", "숙박")) {
+      pool.addAll(placeRepository.searchByCategoryIn(
+          CATEGORY_ALIASES.get(category), null, "", null, null, null, null, false, false, null,
+          org.springframework.data.domain.PageRequest.of(0, 8, byIdDesc)).getContent());
+    }
+
+    record Candidate(Place place, org.ict.datemanagerbackend.domain.place.entity.PlaceCategory category, int matchScore) {}
+
+    List<Candidate> scored = pool.stream()
+        .map(p -> {
+          org.ict.datemanagerbackend.domain.place.entity.PlaceCategory c = p.getPlaceCategory();
+          if (c == null) return null;
+          int score = (100 - Math.abs(placeAxisOrDefault(c.getScoreEnergy()) - userScores.get("energy")))
+              + (100 - Math.abs(placeAxisOrDefault(c.getScoreImmersion()) - userScores.get("immersion")))
+              + (100 - Math.abs(placeAxisOrDefault(c.getScoreVibe()) - userScores.get("vibe")))
+              + (100 - Math.abs(placeAxisOrDefault(c.getScoreAesthetic()) - userScores.get("aesthetic")))
+              + (100 - Math.abs(placeAxisOrDefault(c.getScoreDepth()) - userScores.get("depth")))
+              + (100 - Math.abs(placeAxisOrDefault(c.getScorePacing()) - userScores.get("pacing")));
+          return new Candidate(p, c, score);
+        })
+        .filter(java.util.Objects::nonNull)
+        .toList();
+
+    // 같은 카테고리가 매칭점수 상위를 통째로 차지하는 걸 막는다(2026-08-25) - PlaceCategory 점수는
+    // 세부분류 단위라 같은 세부분류 장소는 전부 점수가 동일해서, 그냥 상위 15개를 자르면 한
+    // 카테고리로만 몰릴 수 있다(실제 테스트로 발견 - 박물관/미술관 4곳만 추천됨). 카테고리별 상위
+    // 3개까지만 남기고 그중에서 전체 상위를 추린다.
+    List<Candidate> ranked = scored.stream()
+        .collect(Collectors.groupingBy(c -> c.place().getCategory()))
+        .values().stream()
+        .flatMap(group -> group.stream()
+            .sorted((a, b) -> b.matchScore() - a.matchScore())
+            .limit(3))
+        .sorted((a, b) -> b.matchScore() - a.matchScore())
+        .limit(16)
+        .toList();
+
+    if (ranked.isEmpty()) {
+      return List.of();
+    }
+
+    Map<Long, Candidate> candidateById = ranked.stream()
+        .collect(Collectors.toMap(c -> c.place().getId(), c -> c));
+
+    try {
+      String userScoreText = userScores.entrySet().stream()
+          .map(e -> e.getKey() + ": " + e.getValue())
+          .collect(Collectors.joining(", "));
+      String candidateText = ranked.stream()
+          .map(c -> "id:%d name:%s category:%s address:%s".formatted(
+              c.place().getId(), c.place().getName(), c.place().getCategory(),
+              c.place().getAddress() != null ? c.place().getAddress() : ""))
+          .collect(Collectors.joining("\n"));
+
+      String content = requestChatCompletionText(
+          COURSE_RECOMMENDATION_PROMPT.formatted(userScoreText, candidateText), true);
+      JsonNode root = objectMapper.readTree(content);
+
+      List<org.ict.datemanagerbackend.domain.aichat.dto.CourseRecommendationDto> result = new ArrayList<>();
+      for (JsonNode pick : root.path("picks")) {
+        if (!pick.path("id").isNumber()) continue;
+        Candidate candidate = candidateById.get(pick.path("id").asLong());
+        if (candidate == null) continue; // AI가 후보 목록에 없는 id를 지어낸 경우 방어
+        result.add(new org.ict.datemanagerbackend.domain.aichat.dto.CourseRecommendationDto(
+            candidate.place().getId(), candidate.place().getName(), candidate.place().getCategory(),
+            candidate.category().getSubCategory(), candidate.place().getAddress(),
+            candidate.place().getImageUrl(), pick.path("reason").asText("")));
+      }
+      if (!result.isEmpty()) {
+        return result;
+      }
+    } catch (Exception e) {
+      log.warn("AI 코스 추천 실패, 매칭점수 상위로 대체 (userId={})", user.getId(), e);
+    }
+
+    return ranked.stream()
+        .limit(4)
+        .map(c -> new org.ict.datemanagerbackend.domain.aichat.dto.CourseRecommendationDto(
+            c.place().getId(), c.place().getName(), c.place().getCategory(),
+            c.category().getSubCategory(), c.place().getAddress(), c.place().getImageUrl(),
+            "성향에 잘 맞는 곳이에요"))
+        .toList();
+  }
+
+  private int styleAxisOrDefault(Double value) {
+    return value != null ? (int) Math.round(value) : 50;
+  }
+
+  private int placeAxisOrDefault(Integer value) {
+    return value != null ? value : 50;
   }
 
   /** requestResponse()의 반환값 - 답변 텍스트와, 다음 턴에 이어 보낼 응답 id를 함께 담는다. */

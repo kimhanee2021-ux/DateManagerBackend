@@ -1,6 +1,7 @@
 package org.ict.datemanagerbackend.domain.aichat.controller;
 
 import lombok.RequiredArgsConstructor;
+import org.ict.datemanagerbackend.domain.aichat.dto.CourseRecommendationDto;
 import org.ict.datemanagerbackend.domain.aichat.dto.Response.AiChatMessageResponse;
 import org.ict.datemanagerbackend.domain.aichat.dto.Response.AiChatSessionResponse;
 import org.ict.datemanagerbackend.domain.aichat.entity.AiChatMessage;
@@ -112,6 +113,23 @@ public class AiChatController {
       // OpenAI 결제 미등록(401)이나 한도 초과(429) 등 외부 API 호출 실패를 여기서 잡는다.
       return ResponseEntity.status(502).body(Map.of("error", "AI 응답을 받는 중 오류가 발생했습니다: " + e.getMessage()));
     }
+  }
+
+  /**
+   * GET /api/aichat/course-recommendation - 홈탭 "AI 코스 추천" 배너용(2026-08-25 추가).
+   * 채팅 세션과 무관한 1회성 추천이라 sessionId가 필요 없다.
+   */
+  @GetMapping("/course-recommendation")
+  public ResponseEntity<?> recommendCourse(Authentication authentication) {
+    if (authentication == null) {
+      return ResponseEntity.status(401).body(Map.of("error", "로그인이 필요합니다"));
+    }
+    User me = currentUser(authentication);
+    if (me == null) {
+      return ResponseEntity.status(404).body(Map.of("error", "사용자를 찾을 수 없습니다"));
+    }
+    List<CourseRecommendationDto> recommendation = aiChatService.recommendCourse(me);
+    return ResponseEntity.ok(recommendation);
   }
 
   /** GET /api/aichat/sessions/{sessionId}/messages - 메시지 이력 조회 */
