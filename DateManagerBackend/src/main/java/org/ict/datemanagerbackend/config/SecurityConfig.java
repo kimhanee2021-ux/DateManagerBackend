@@ -66,10 +66,13 @@ public class SecurityConfig {
 
     // 프론트엔드 origin에서 오는 요청만 허용하는 CORS 설정.
     // app.frontend-base-url과 실제 프론트 실행 주소가 다르면 브라우저가 요청을 막아버린다.
+    // "http://localhost"(포트 없음)는 안드로이드 앱(Capacitor, capacitor.config.json의
+    // androidScheme: "http")이 웹뷰 안에서 쓰는 origin이다 - 이게 빠져있으면 안드로이드 앱에서
+    // 모든 API 호출이 CORS로 막힌다(2026-08-24 실기기 테스트로 발견).
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration config = new CorsConfiguration();
-        config.setAllowedOrigins(List.of(frontendBaseUrl));
+        config.setAllowedOrigins(List.of(frontendBaseUrl, "http://localhost"));
         config.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
         config.setAllowedHeaders(List.of("*"));
         config.setAllowCredentials(true);
