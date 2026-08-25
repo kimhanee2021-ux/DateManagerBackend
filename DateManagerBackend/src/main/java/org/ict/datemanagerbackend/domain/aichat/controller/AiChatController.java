@@ -2,6 +2,7 @@ package org.ict.datemanagerbackend.domain.aichat.controller;
 
 import lombok.RequiredArgsConstructor;
 import org.ict.datemanagerbackend.domain.aichat.dto.CourseRecommendationDto;
+import org.ict.datemanagerbackend.domain.aichat.dto.IntentSummaryDto;
 import org.ict.datemanagerbackend.domain.aichat.dto.Response.AiChatMessageResponse;
 import org.ict.datemanagerbackend.domain.aichat.dto.Response.AiChatSessionResponse;
 import org.ict.datemanagerbackend.domain.aichat.entity.AiChatMessage;
@@ -106,7 +107,7 @@ public class AiChatController {
       AiChatMessage aiMessage = aiChatService.sendMessage(me, sessionId, text, lat, lon);
       return ResponseEntity.ok(new AiChatMessageResponse(
           aiMessage.getId(), aiMessage.getSenderType(), aiMessage.getMessageText(), aiMessage.getCreatedAt(),
-          aiMessage.getFollowUpQuestions()));
+          aiMessage.getFollowUpQuestions(), aiMessage.getUpdatedStyleAxes()));
     } catch (IllegalArgumentException e) {
       return ResponseEntity.status(404).body(Map.of("error", e.getMessage()));
     } catch (Exception e) {
@@ -132,6 +133,26 @@ public class AiChatController {
     return ResponseEntity.ok(recommendation);
   }
 
+  /**
+   * GET /api/aichat/intent-summary - 홈탭 "최근 관심사" 인사이트 칩용(2026-08-25 추가).
+   * 대화 이력이 없으면 body 없이 204를 준다.
+   */
+  @GetMapping("/intent-summary")
+  public ResponseEntity<?> getIntentSummary(Authentication authentication) {
+    if (authentication == null) {
+      return ResponseEntity.status(401).body(Map.of("error", "로그인이 필요합니다"));
+    }
+    User me = currentUser(authentication);
+    if (me == null) {
+      return ResponseEntity.status(404).body(Map.of("error", "사용자를 찾을 수 없습니다"));
+    }
+    IntentSummaryDto summary = aiChatService.getIntentSummary(me);
+    if (summary == null) {
+      return ResponseEntity.noContent().build();
+    }
+    return ResponseEntity.ok(summary);
+  }
+
   /** GET /api/aichat/sessions/{sessionId}/messages - 메시지 이력 조회 */
   @GetMapping("/sessions/{sessionId}/messages")
   public ResponseEntity<?> getMessages(Authentication authentication, @PathVariable Long sessionId) {
@@ -144,7 +165,7 @@ public class AiChatController {
     }
     try {
       List<AiChatMessageResponse> messages = aiChatService.getMessages(me, sessionId).stream()
-          .map(m -> new AiChatMessageResponse(m.getId(), m.getSenderType(), m.getMessageText(), m.getCreatedAt(), null))
+          .map(m -> new AiChatMessageResponse(m.getId(), m.getSenderType(), m.getMessageText(), m.getCreatedAt(), null, null))
           .toList();
       return ResponseEntity.ok(messages);
     } catch (IllegalArgumentException e) {

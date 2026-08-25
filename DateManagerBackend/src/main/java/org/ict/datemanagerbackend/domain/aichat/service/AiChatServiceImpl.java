@@ -339,7 +339,7 @@ public class AiChatServiceImpl implements AiChatService {
         .messageText(userText)
         .build();
     aiChatMessageRepository.save(userMessage);
-    analyzeMessage(userMessage);
+    List<String> updatedStyleAxes = analyzeMessage(userMessage);
 
     // 상황 정보(현재 시각/날씨)는 대화 내용이 아니라 매 요청마다 새로 알려줘야 하는 값이라,
     // instructions로만 매번 새로 만들어 보낸다(대화 이력에는 안 쌓임). 근처 장소 목록은 더 이상
@@ -357,6 +357,9 @@ public class AiChatServiceImpl implements AiChatService {
         .messageText(result.text())
         .build();
     AiChatMessage saved = aiChatMessageRepository.save(aiMessage);
+    if (!updatedStyleAxes.isEmpty()) {
+      saved.setUpdatedStyleAxes(updatedStyleAxes);
+    }
 
     session.setLastResponseId(result.responseId());
     if (isFirstTurn) {
@@ -477,13 +480,22 @@ public class AiChatServiceImpl implements AiChatService {
         + "[시스템 제공 정보]로 알려준 오늘 날짜와 비교해서 언제 열리는지도 같이 말해줘.";
   }
 
+  // SCORE_TYPES(ENERGY 등)와 짝을 이루는 한글 이름 - "성향이 이렇게 바뀌었어요" 안내용.
+  private static final Map<String, String> AXIS_KOREAN_NAME = Map.of(
+      "ENERGY", "에너지", "IMMERSION", "몰입감", "VIBE", "분위기", "AESTHETIC", "심미감", "DEPTH", "깊이"
+  );
+
   /**
    * 사용자 메시지 하나를 별도의 OpenAI 호출로 분석해서 의도 태그(AiChatMessageIntent)와
    * 성향점수(AiChatMessageScore)를 뽑아 저장한다. 실제 채팅 응답과는 무관한 부가 기능이라,
    * 분석이 실패해도(JSON 파싱 실패, API 호출 실패 등) 로그만 남기고 넘어간다 - 분석 실패 때문에
    * 사용자가 챗봇 답변을 못 받으면 안 되니까(날씨 조회 실패를 무시하는 것과 같은 이유).
+   *
+   * @return 이번 메시지로 UserStyle이 실시간 갱신된 축의 한글 이름 목록(2026-08-25 추가) - 예전엔
+   *     이 갱신이 화면에 전혀 안 보이고 조용히 일어났는데, 이제 챗봇 응답에 같이 실어서 보여준다.
    */
-  private void analyzeMessage(AiChatMessage userMessage) {
+  private List<String> analyzeMessage(AiChatMessage userMessage) {
+    List<String> updatedAxes = new ArrayList<>();
     try {
       String content = requestAnalysisCompletion(userMessage.getMessageText());
       JsonNode root = objectMapper.readTree(content);
@@ -512,6 +524,7 @@ public class AiChatServiceImpl implements AiChatService {
           // 이건 그 값을 누적해서 유저의 실제 성향 점수 자체를 서서히 움직이는 별도 단계다.
           try {
             userStyleUpdateService.applyAiChatMention(userMessage.getSender().getId(), scoreType, scoreValue);
+            updatedAxes.add(AXIS_KOREAN_NAME.getOrDefault(scoreType, scoreType));
           } catch (Exception ex) {
             log.warn("성향값 실시간 갱신 실패 (messageId={}, axis={})", userMessage.getId(), scoreType, ex);
           }
@@ -520,6 +533,7 @@ public class AiChatServiceImpl implements AiChatService {
     } catch (Exception e) {
       log.warn("메시지 의도/성향점수 분석 실패 (messageId={})", userMessage.getId(), e);
     }
+    return updatedAxes;
   }
 
   /**
@@ -702,12 +716,53 @@ public class AiChatServiceImpl implements AiChatService {
         .toList();
   }
 
+  private static final String REPORT_SUMMARY_PROMPT = """
+      아래는 서비스에 접수된 처리 대기 중인 신고 사유 목록이야. 관리자가 한눈에 파악할 수 있게
+      요약해줘. 비슷한 유형끼리 묶어서 "- 유형: 건수, 짧은 설명" 형식의 불릿 목록으로, 전체
+      3~5줄 이내로 작성해. 설명 없이 목록만 출력해.
+
+      [신고 사유 목록]
+      %s
+      """;
+
+  /** 관리자 페이지 "신고 요약" - 신고 건수가 늘어날수록 사유를 하나씩 읽기 번거로워서 추가(2026-08-25). */
+  @Override
+  public String summarizeReports(List<String> reasons) {
+    if (reasons.isEmpty()) return "";
+    String reasonText = reasons.stream()
+        .map(r -> "- " + r)
+        .collect(Collectors.joining("\n"));
+    return requestChatCompletionText(REPORT_SUMMARY_PROMPT.formatted(reasonText), false).trim();
+  }
+
   private int styleAxisOrDefault(Double value) {
     return value != null ? (int) Math.round(value) : 50;
   }
 
   private int placeAxisOrDefault(Integer value) {
     return value != null ? value : 50;
+  }
+
+  // INTENT_TAGS와 짝을 이루는 한글 라벨 - "최근 관심사" 칩에 태그 코드 그대로 노출하면 안 되니.
+  private static final Map<String, String> INTENT_LABELS = Map.of(
+      "PLACE_RECOMMENDATION", "장소 추천",
+      "GIFT_ADVICE", "선물 고민",
+      "CONVERSATION_TOPIC", "대화 주제 고민",
+      "RELATIONSHIP_CONCERN", "연애 고민",
+      "GENERAL_CHAT", "일상 대화"
+  );
+
+  /** 저장만 되고 안 쓰이던 의도 태그(AiChatMessageIntent)를 처음으로 집계해서 재활용한다. */
+  @Override
+  public org.ict.datemanagerbackend.domain.aichat.dto.IntentSummaryDto getIntentSummary(User user) {
+    List<Object[]> counts = aiChatMessageIntentRepository.countIntentTagsByUserId(user.getId());
+    if (counts.isEmpty()) return null;
+
+    Object[] top = counts.get(0);
+    String tag = (String) top[0];
+    long count = ((Number) top[1]).longValue();
+    return new org.ict.datemanagerbackend.domain.aichat.dto.IntentSummaryDto(
+        tag, INTENT_LABELS.getOrDefault(tag, tag), count);
   }
 
   /** requestResponse()의 반환값 - 답변 텍스트와, 다음 턴에 이어 보낼 응답 id를 함께 담는다. */

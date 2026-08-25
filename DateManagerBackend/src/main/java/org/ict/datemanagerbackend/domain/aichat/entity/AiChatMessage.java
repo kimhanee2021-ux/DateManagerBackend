@@ -45,4 +45,11 @@ public class AiChatMessage {
   @Setter
   private List<String> followUpQuestions;
 
+  // 이번 턴에서 대화 내용을 분석해 UserStyle이 실시간으로 갱신된 축이 있으면 담는다(2026-08-25
+  // 추가) - followUpQuestions와 같은 이유로 DB엔 저장 안 하고 그 턴의 응답에만 실어 보낸다.
+  // 예전엔 이 갱신이 화면에 전혀 안 보이고 조용히 백그라운드에서만 일어났다.
+  @Transient
+  @Setter
+  private List<String> updatedStyleAxes;
+
 }
