@@ -11,81 +11,57 @@ import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDate;
 import java.util.List;
-import java.util.Map;
-import java.util.NoSuchElementException;
 
-// 2026-08-22 - 원래 "/calendar"로 매핑돼 있었는데, SecurityConfig의 인증 필수 규칙이
-// "/api/**"에만 걸려 있어서 이 경로는 로그인 없이도(anyRequest().permitAll()) 그냥 통과돼버렸다.
-// 그 상태로 currentUserId()가 인증 정보 없이 authentication.getPrincipal()을 호출하면
-// NPE(500)가 나는 버그가 있었음 - 다른 컨트롤러들과 동일하게 "/api" 접두사를 붙여 인증이
-// 실제로 강제되게 고쳤다.
 @RestController
 @RequestMapping("/api/calendar")
 @RequiredArgsConstructor
-public class UserCalendarController {
 
+//로그인 실패시 뜨는 오류
+
+
+
+public class UserCalendarController {
   //서비스 레이어 가져오기
   private final UserCalendarService userCalendarService;
 
-  // JwtAuthFilter가 인증된 요청의 principal에 유저 PK(Long)를 직접 넣어준다(ReportController 등
-  // 다른 컨트롤러와 동일한 패턴) - 예전엔 이 값 대신 1L을 하드코딩해서, 누가 로그인하든 전부 같은
-  // "user_id=1" 계정의 캘린더를 공유해버리는 버그가 있었다(2026-08-22 발견, 수정).
+  // 로그인시 로그인 회원 id 가져오기
   private Long currentUserId(Authentication authentication) {
     return (Long) authentication.getPrincipal();
   }
 
-  // 토큰 없이(또는 로그인 직후 토큰이 axios 헤더에 아직 안 붙은 타이밍에) 요청이 들어오면
-  // authentication 자체가 null이라 currentUserId()에서 NPE(500)가 났다(2026-08-22 발견) -
-  // PlaceController의 기존 패턴과 동일하게 401로 명확히 거절한다.
-  private ResponseEntity<?> unauthorized() {
-    return ResponseEntity.status(401).body(Map.of("error", "로그인이 필요합니다"));
-  }
 
   @PostMapping
-  public ResponseEntity<?> createUserCalendar(Authentication authentication,
-       @RequestBody UserCalendarCreateRequest userCalendarCreateRequest) {
-    if (authentication == null) {
-      return unauthorized();
-    }
-    UserCalendarResponse userCalendarResponse = userCalendarService.createUserCalendar(currentUserId(authentication), userCalendarCreateRequest);
-    return ResponseEntity.status(201).body(userCalendarResponse);
-  }
-  @GetMapping
-  public ResponseEntity<?> getUserCalendar(Authentication authentication,
-                                                                      @RequestParam LocalDate start, @RequestParam LocalDate end) {
-    if (authentication == null) {
-      return unauthorized();
-    }
-    List<UserCalendarResponse> getUserCalendar = userCalendarService.getMonthlyCalendars(currentUserId(authentication), start, end);
-    return ResponseEntity.ok(getUserCalendar);
+  public ResponseEntity<UserCalendarResponse> createUserCalendar(
+      Authentication authentication,
+      @RequestBody UserCalendarCreateRequest request){
+    UserCalendarResponse userCalendarResponse = userCalendarService
+        .createUserCalendar(currentUserId(authentication),request);
+      return ResponseEntity.status(201).body(userCalendarResponse);
   }
 
-  @PutMapping("/{id}")
-  public ResponseEntity<?> PutUserCalendar(Authentication authentication, @PathVariable Long id,
-                                            @RequestBody UserCalendarUpdateRequest userCalendarUpdateRequest) {
-    if (authentication == null) {
-      return unauthorized();
+  @GetMapping
+  public ResponseEntity<List<UserCalendarResponse>> getUserCalendar(
+      Authentication authentication,
+      @RequestParam LocalDate start,
+      @RequestParam LocalDate end){
+        List<UserCalendarResponse> userCalendarResponse = userCalendarService
+            .getMonthlyCalendars(currentUserId(authentication),start,end);
+        return ResponseEntity.ok().body(userCalendarResponse);
     }
-    try {
-      return ResponseEntity.ok(userCalendarService.updateUserCalendar(currentUserId(authentication), id, userCalendarUpdateRequest));
-    } catch (NoSuchElementException e) {
-      return ResponseEntity.status(404).body(Map.of("error", e.getMessage()));
-    } catch (SecurityException e) {
-      return ResponseEntity.status(403).body(Map.of("error", e.getMessage()));
-    }
+  @PutMapping("/{userCalendarId}")
+  public ResponseEntity<UserCalendarResponse> updateUserCalendar(
+      Authentication authentication,
+      @PathVariable Long userCalendarId,
+      @RequestBody UserCalendarUpdateRequest request){
+    UserCalendarResponse userCalendarResponse = userCalendarService
+        .updateUserCalendar(currentUserId(authentication),userCalendarId,request);
+    return ResponseEntity.ok().body(userCalendarResponse);
   }
-  @DeleteMapping("/{id}")
-  public ResponseEntity<?> DeleteUserCalendar(Authentication authentication, @PathVariable Long id){
-    if (authentication == null) {
-      return unauthorized();
-    }
-    try {
-      userCalendarService.deleteUserCalendar(currentUserId(authentication), id);
-      return ResponseEntity.noContent().build();
-    } catch (NoSuchElementException e) {
-      return ResponseEntity.status(404).body(Map.of("error", e.getMessage()));
-    } catch (SecurityException e) {
-      return ResponseEntity.status(403).body(Map.of("error", e.getMessage()));
-    }
-  }
+ @DeleteMapping("/{userCalendarId}")
+  public ResponseEntity<Void> deleteUserCalendar(
+      Authentication authentication,
+      @PathVariable Long userCalendarId){
+    userCalendarService.deleteUserCalendar(currentUserId(authentication),userCalendarId);
+    return ResponseEntity.status(204).build();
+ }
 }
