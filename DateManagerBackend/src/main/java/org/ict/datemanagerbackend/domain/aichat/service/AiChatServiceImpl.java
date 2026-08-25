@@ -281,7 +281,8 @@ public class AiChatServiceImpl implements AiChatService {
 
       규칙:
       - 반드시 4곳을 고르고, id는 후보 목록에 있는 값만 사용해(후보에 없는 id를 지어내지 마).
-      - 후보 목록은 이미 사용자 위치 반경 10km 이내로 걸러져 있으니 지역은 신경 안 써도 돼.
+      - 하루 동안 실제로 돌아다닐 수 있는 코스여야 해 - 같은 시/도(주소 앞부분)에 있는 곳 위주로
+        고르고, 서로 다른 지역(예: 서울과 제주)을 섞지 마.
       - category가 겹치지 않게 최대한 다양하게 골라줘(같은 category만 4곳 고르지 마. 예: 콘서트
         4개처럼).
 
@@ -606,8 +607,7 @@ public class AiChatServiceImpl implements AiChatService {
    * 상위 4곳으로 조용히 대체한다(챗봇의 다른 부가 기능들과 같은 원칙 - 실패해도 화면이 비면 안 됨).
    */
   @Override
-  public List<org.ict.datemanagerbackend.domain.aichat.dto.CourseRecommendationDto> recommendCourse(
-      User user, Double lat, Double lon) {
+  public List<org.ict.datemanagerbackend.domain.aichat.dto.CourseRecommendationDto> recommendCourse(User user) {
     org.ict.datemanagerbackend.domain.user.entity.UserStyle style =
         userStyleRepository.findById(user.getId()).orElse(null);
 
@@ -619,36 +619,23 @@ public class AiChatServiceImpl implements AiChatService {
     userScores.put("depth", styleAxisOrDefault(style == null ? null : style.getInitDepth()));
     userScores.put("pacing", styleAxisOrDefault(style == null ? null : style.getInitPacing()));
 
-    List<Place> pool;
-    if (lat != null && lon != null) {
-      // 내 위치 반경 10km 이내로만 추천(2026-08-25 추가) - 예전엔 지역 필터가 전혀 없어서 서울/
-      // 부산/제주가 한 코스에 섞여 나오는 문제가 있었다("지역이 너무 넓다" 실사용 피드백). 위경도
-      // 사각형으로 넉넉히 1차로 추린 뒤, haversine으로 정확한 원형 10km만 다시 거른다 - 카테고리별로
-      // 나눠 모으던 예전 방식(다양성 확보용)은 이제 필요 없다. 반경 안에 있는 장소들 자체가 이미
-      // 카테고리가 섞여 있고, 카테고리 쏠림 방지 로직은 아래에서 그대로 유지된다.
-      double latDelta = 10.0 / 111.32; // 위도 1도 ≈ 111.32km
-      double lonDelta = 10.0 / (111.32 * Math.cos(Math.toRadians(lat)));
-      List<Place> boxCandidates = placeRepository.findByLatitudeBetweenAndLongitudeBetween(
-          lat - latDelta, lat + latDelta, lon - lonDelta, lon + lonDelta,
-          org.springframework.data.domain.PageRequest.of(0, 400));
-      pool = boxCandidates.stream()
-          .filter(p -> haversineMeters(lat, lon, p.getLatitude(), p.getLongitude()) <= 10000)
-          .toList();
-    } else {
-      // 위치 정보가 없으면(권한 거부 등) 예전 방식(카테고리별로 나눠 모으기)으로 대체.
-      pool = new ArrayList<>();
-      org.springframework.data.domain.Sort byIdDesc =
-          org.springframework.data.domain.Sort.by(org.springframework.data.domain.Sort.Direction.DESC, "id");
-      for (String category : List.of("맛집", "전시", "박물관·미술관", "관광지", "액티비티", "쇼핑")) {
-        pool.addAll(placeRepository.searchByCategoryIn(
-            CATEGORY_ALIASES.get(category), null, "", null, null, null, null, false, false, null,
-            org.springframework.data.domain.PageRequest.of(0, 20, byIdDesc)).getContent());
-      }
-      for (String category : List.of("공연", "숙박")) {
-        pool.addAll(placeRepository.searchByCategoryIn(
-            CATEGORY_ALIASES.get(category), null, "", null, null, null, null, false, false, null,
-            org.springframework.data.domain.PageRequest.of(0, 8, byIdDesc)).getContent());
-      }
+    // 카테고리별로 나눠서 후보를 모은다(2026-08-25) - searchAll로 최신 id 순 150개를 통째로 가져오면
+    // 한 카테고리(예: 콘서트 임포트 배치)가 몰려서 매칭점수 상위가 전부 같은 카테고리로 쏠리는 문제가
+    // 있었다("코스 추천이 콘서트 4개만 골라줌" - 실사용 테스트로 발견). 데이트 코스로 하루에 돌 만한
+    // 카테고리 위주로 나눠 모아서, 후보 풀 자체에 다양성을 만들어둔다.
+    List<Place> pool = new ArrayList<>();
+    org.springframework.data.domain.Sort byIdDesc =
+        org.springframework.data.domain.Sort.by(org.springframework.data.domain.Sort.Direction.DESC, "id");
+    for (String category : List.of("맛집", "전시", "박물관·미술관", "관광지", "액티비티", "쇼핑")) {
+      pool.addAll(placeRepository.searchByCategoryIn(
+          CATEGORY_ALIASES.get(category), null, "", null, null, null, null, false, false, null,
+          org.springframework.data.domain.PageRequest.of(0, 20, byIdDesc)).getContent());
+    }
+    // 공연/숙박은 코스 하나를 통째로 채우면 안 되는 성격이라(시간 고정, 숙박은 마지막 한 곳) 적게만 섞는다.
+    for (String category : List.of("공연", "숙박")) {
+      pool.addAll(placeRepository.searchByCategoryIn(
+          CATEGORY_ALIASES.get(category), null, "", null, null, null, null, false, false, null,
+          org.springframework.data.domain.PageRequest.of(0, 8, byIdDesc)).getContent());
     }
 
     record Candidate(Place place, org.ict.datemanagerbackend.domain.place.entity.PlaceCategory category, int matchScore) {}
@@ -754,18 +741,6 @@ public class AiChatServiceImpl implements AiChatService {
 
   private int placeAxisOrDefault(Integer value) {
     return value != null ? value : 50;
-  }
-
-  /** "AI 코스 추천" 반경 필터용 두 좌표 사이 거리(미터). 좌표가 없는 장소는 무조건 범위 밖으로 취급. */
-  private double haversineMeters(double lat1, double lon1, Double lat2, Double lon2) {
-    if (lat2 == null || lon2 == null) return Double.MAX_VALUE;
-    double earthRadius = 6371000;
-    double dLat = Math.toRadians(lat2 - lat1);
-    double dLon = Math.toRadians(lon2 - lon1);
-    double a = Math.sin(dLat / 2) * Math.sin(dLat / 2)
-        + Math.cos(Math.toRadians(lat1)) * Math.cos(Math.toRadians(lat2))
-        * Math.sin(dLon / 2) * Math.sin(dLon / 2);
-    return 2 * earthRadius * Math.asin(Math.sqrt(a));
   }
 
   // INTENT_TAGS와 짝을 이루는 한글 라벨 - "최근 관심사" 칩에 태그 코드 그대로 노출하면 안 되니.

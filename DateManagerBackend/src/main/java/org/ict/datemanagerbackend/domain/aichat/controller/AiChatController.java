@@ -118,13 +118,10 @@ public class AiChatController {
 
   /**
    * GET /api/aichat/course-recommendation - 홈탭 "AI 코스 추천" 배너용(2026-08-25 추가).
-   * 채팅 세션과 무관한 1회성 추천이라 sessionId가 필요 없다. lat/lon은 선택값 - 위치 권한을 안
-   * 줬으면 없이 보내도 되고(전국 대상으로 대체), 있으면 반경 10km로 좁혀서 추천한다.
+   * 채팅 세션과 무관한 1회성 추천이라 sessionId가 필요 없다.
    */
   @GetMapping("/course-recommendation")
-  public ResponseEntity<?> recommendCourse(Authentication authentication,
-                                            @RequestParam(required = false) String lat,
-                                            @RequestParam(required = false) String lon) {
+  public ResponseEntity<?> recommendCourse(Authentication authentication) {
     if (authentication == null) {
       return ResponseEntity.status(401).body(Map.of("error", "로그인이 필요합니다"));
     }
@@ -132,8 +129,7 @@ public class AiChatController {
     if (me == null) {
       return ResponseEntity.status(404).body(Map.of("error", "사용자를 찾을 수 없습니다"));
     }
-    List<CourseRecommendationDto> recommendation =
-        aiChatService.recommendCourse(me, parseNullableDouble(lat), parseNullableDouble(lon));
+    List<CourseRecommendationDto> recommendation = aiChatService.recommendCourse(me);
     return ResponseEntity.ok(recommendation);
   }
 
