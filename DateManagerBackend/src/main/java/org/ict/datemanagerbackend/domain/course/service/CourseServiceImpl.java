@@ -121,9 +121,22 @@ public class CourseServiceImpl implements CourseService {
 
     CourseItem current = items.get(currentIndex);
     CourseItem target = items.get(targetIndex);
-    int tempSequence = current.getSequence();
-    current.setSequence(target.getSequence());
-    target.setSequence(tempSequence);
+
+    // course_items에 (course_group_id, sequence) 유니크 제약이 걸려있어서, current를
+    // target의 sequence로 먼저 바꿔버리면 target이 아직 그 값을 갖고 있는 순간
+    // 유니크 제약을 위반해서 500 에러가 났다("순서 변경 중 오류가 발생했습니다",
+    // 2026-08-25 발견). -1(다른 행과 절대 안 겹치는 값)을 거쳐서 3단계로 바꾸고,
+    // 중간에 flush해서 매 단계가 실제로 겹치지 않게 한다.
+    int currentSequence = current.getSequence();
+    int targetSequence = target.getSequence();
+
+    current.setSequence(-1);
+    courseItemRepository.flush();
+
+    target.setSequence(currentSequence);
+    courseItemRepository.flush();
+
+    current.setSequence(targetSequence);
   }
 
 

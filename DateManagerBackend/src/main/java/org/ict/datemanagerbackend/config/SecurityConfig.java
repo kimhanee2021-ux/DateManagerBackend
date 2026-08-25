@@ -73,7 +73,11 @@ public class SecurityConfig {
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration config = new CorsConfiguration();
         config.setAllowedOrigins(List.of(frontendBaseUrl, "http://localhost"));
-        config.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
+        // PATCH가 빠져있어서 코스 순서 변경(PATCH /api/course/groups/{id}/items/{id}/move)
+        // 같은 PATCH 요청이 브라우저 프리플라이트(OPTIONS) 단계에서 전부 CORS로 막히고 있었다
+        // ("순서 변경 중 오류가 발생했습니다" - curl로는 프리플라이트가 없어 재현이 안 됐고,
+        // 실제 브라우저에서만 발생. 2026-08-25 발견).
+        config.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
         config.setAllowedHeaders(List.of("*"));
         config.setAllowCredentials(true);
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
