@@ -108,6 +108,65 @@ public class PlaceDedupServiceImpl implements PlaceDedupService {
         return Map.of("merged", merged, "skipped", skipped);
     }
 
+    // findDuplicate/mergeDuplicatePlaces는 정규화한 이름이 "완전히 같아야만" 합치는데, 실제로는
+    // "용평제4차콘도미니엄(그린피아)"(CSV) vs TourAPI 쪽 표기 차이처럼 완전일치가 안 되는 중복이 많다
+    // (2026-08-27 실측 - TourAPI 숙박 2,041건 중 514건만 완전일치로 매칭됨). 여기서는 사진을 이미
+    // 갖고 있는 TourAPI 숙박 항목을 기준으로, 반경 내에서 이름이 "포함 관계"(느슨한 부분 일치, SBIZ
+    // 매칭과 동일 방식)이고 사진이 없는 CSV 숙박 항목에 사진만 채워준다. 삭제나 다른 필드 덮어쓰기는
+    // 하지 않는다 - 정규화 이름이 다른 별개 장소를 잘못 합치는 위험을 피하려고, 매칭 후보가 여러 개면
+    // 가장 가까운 거리 하나에만 채운다.
+    @Override
+    public Map<String, Integer> backfillLodgingImagesFromTourApi() {
+        int filled = 0;
+        int skipped = 0;
+
+        List<Place> tourApiLodging = placeRepository.findAll().stream()
+                .filter(p -> "TOURAPI".equals(p.getExternalSource()) && "숙박".equals(p.getCategory())
+                        && p.getImageUrl() != null && !p.getImageUrl().isBlank()
+                        && p.getLatitude() != null && p.getLongitude() != null
+                        && p.getName() != null && !p.getName().isBlank())
+                .toList();
+
+        for (Place source : tourApiLodging) {
+            String normalizedSource = normalize(source.getName());
+            List<Place> nearby = placeRepository.findNearby(
+                    source.getLatitude() - RADIUS_DEGREES, source.getLatitude() + RADIUS_DEGREES,
+                    source.getLongitude() - RADIUS_DEGREES, source.getLongitude() + RADIUS_DEGREES);
+
+            Place best = null;
+            double bestDistSq = Double.MAX_VALUE;
+            for (Place candidate : nearby) {
+                if (!"LODGING_STD".equals(candidate.getExternalSource())) continue;
+                if (candidate.getImageUrl() != null && !candidate.getImageUrl().isBlank()) continue;
+                if (candidate.getName() == null || candidate.getName().isBlank()) continue;
+
+                String normalizedCandidate = normalize(candidate.getName());
+                if (normalizedCandidate.isEmpty()) continue;
+                if (!normalizedSource.contains(normalizedCandidate) && !normalizedCandidate.contains(normalizedSource)) {
+                    continue;
+                }
+
+                double dLat = candidate.getLatitude() - source.getLatitude();
+                double dLng = candidate.getLongitude() - source.getLongitude();
+                double distSq = dLat * dLat + dLng * dLng;
+                if (distSq < bestDistSq) {
+                    bestDistSq = distSq;
+                    best = candidate;
+                }
+            }
+
+            if (best != null) {
+                best.setImageUrl(source.getImageUrl());
+                placeRepository.save(best);
+                filled++;
+            } else {
+                skipped++;
+            }
+        }
+
+        return Map.of("filled", filled, "skipped", skipped);
+    }
+
     // 공백/괄호를 지우고 소문자로 바꿔서 비교 - "스타벅스 강남점"과 "스타벅스강남점" 같은 표기 차이를 흡수한다.
     private String normalize(String name) {
         return name.replaceAll("\\s+", "")

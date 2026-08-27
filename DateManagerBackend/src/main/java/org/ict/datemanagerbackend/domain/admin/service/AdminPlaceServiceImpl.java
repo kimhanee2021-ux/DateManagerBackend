@@ -16,6 +16,8 @@ import org.ict.datemanagerbackend.domain.place.service.KakaoPlaceSyncService;
 import org.ict.datemanagerbackend.domain.place.service.LodgingCsvSyncService;
 import org.ict.datemanagerbackend.domain.place.service.MuseumSyncService;
 import org.ict.datemanagerbackend.domain.place.service.NaverCategoryMatchService;
+import org.ict.datemanagerbackend.domain.place.service.SbizCategoryMatchService;
+import org.ict.datemanagerbackend.domain.place.service.TourApiDetailSyncService;
 import org.ict.datemanagerbackend.domain.place.service.NaverPlaceSyncService;
 import org.ict.datemanagerbackend.domain.place.service.PlaceCoordinateVerificationService;
 import org.ict.datemanagerbackend.domain.place.service.PlaceDedupService;
@@ -52,6 +54,8 @@ public class AdminPlaceServiceImpl implements AdminPlaceService {
   private final SportsSyncService sportsSyncService;
   private final PlaceCoordinateVerificationService placeCoordinateVerificationService;
   private final NaverCategoryMatchService naverCategoryMatchService;
+  private final TourApiDetailSyncService tourApiDetailSyncService;
+  private final SbizCategoryMatchService sbizCategoryMatchService;
 
   public AdminPlaceServiceImpl(PlaceRepository placeRepository, PlaceCategoryRepository placeCategoryRepository,
                                 PlaceSyncService placeSyncService, TourApiSyncService tourApiSyncService,
@@ -61,7 +65,9 @@ public class AdminPlaceServiceImpl implements AdminPlaceService {
                                 PlaceStyleRepository placeStyleRepository, PlaceRealityRepository placeRealityRepository,
                                 PlaceAmenityRepository placeAmenityRepository, SportsSyncService sportsSyncService,
                                 PlaceCoordinateVerificationService placeCoordinateVerificationService,
-                                NaverCategoryMatchService naverCategoryMatchService) {
+                                NaverCategoryMatchService naverCategoryMatchService,
+                                TourApiDetailSyncService tourApiDetailSyncService,
+                                SbizCategoryMatchService sbizCategoryMatchService) {
     this.placeRepository = placeRepository;
     this.placeCategoryRepository = placeCategoryRepository;
     this.placeSyncService = placeSyncService;
@@ -78,6 +84,8 @@ public class AdminPlaceServiceImpl implements AdminPlaceService {
     this.sportsSyncService = sportsSyncService;
     this.naverCategoryMatchService = naverCategoryMatchService;
     this.placeCoordinateVerificationService = placeCoordinateVerificationService;
+    this.tourApiDetailSyncService = tourApiDetailSyncService;
+    this.sbizCategoryMatchService = sbizCategoryMatchService;
   }
 
   @Override
@@ -106,6 +114,11 @@ public class AdminPlaceServiceImpl implements AdminPlaceService {
   @Override
   public Map<String, Integer> mergeDuplicatePlaces() {
     return placeDedupService.mergeDuplicatePlaces();
+  }
+
+  @Override
+  public Map<String, Integer> backfillLodgingImagesFromTourApi() {
+    return placeDedupService.backfillLodgingImagesFromTourApi();
   }
 
   // TourAPI 3만8천여건을 카카오와 하나씩 대조하느라 수십 분~1시간대까지 걸릴 수 있어(2026-08-20),
@@ -398,17 +411,48 @@ public class AdminPlaceServiceImpl implements AdminPlaceService {
     return Map.of("created", created, "updated", updated, "skipped", skipped);
   }
 
+  // TourAPI 상세정보(운영시간/휴무일/입장료/주차/편의시설/사진갤러리) 동기화(2026-08-26).
+  // 장소 하나당 API를 2번(intro+image)씩 불러서 시간이 걸릴 수 있어, 네이버 매칭 배치가 curl
+  // 타임아웃으로 끊겼던 것과 같은 문제를 피하려고 verifyTourApiCoordinates와 동일하게 가상 스레드로
+  // 띄우고 바로 응답만 반환한다 - 진행 상황/완료 여부는 서버 로그로 확인.
+  @Override
+  public Map<String, String> syncTourApiDetails(int limit) {
+    Thread.ofVirtual().name("tourapi-detail-sync").start(() -> tourApiDetailSyncService.syncDetails(limit));
+    return Map.of(
+        "status", "started",
+        "message", "백그라운드로 실행을 시작했습니다. 진행 상황과 완료 여부는 서버 로그에서 확인하세요."
+    );
+  }
+
   // 네이버 지역 검색 API의 실제 category 태그로 이름 키워드만으론 못 잡던 장소를 재분류(2026-08-22).
   // NaverCategoryMatchService.MatchResult -> Map으로 펼쳐서 다른 관리자 API와 반환 타입을 통일한다.
   @Override
-  public Map<String, Integer> matchPlaceCategoriesViaNaver(int limit) {
+  public Map<String, Object> matchPlaceCategoriesViaNaver(int limit) {
     var result = naverCategoryMatchService.matchUnclassifiedPlaces(limit);
     return Map.of(
         "attempted", result.attempted(),
         "matched", result.matched(),
         "apiNoResult", result.apiNoResult(),
         "noConfidentCandidate", result.noConfidentCandidate(),
-        "noKeywordMatch", result.noKeywordMatch()
+        "noKeywordMatch", result.noKeywordMatch(),
+        "apiError", result.apiError(),
+        "stoppedEarly", result.stoppedEarly()
+    );
+  }
+
+  // 네이버로도 못 잡은 미분류 장소를 소상공인시장진흥공단 상가정보 API로 재분류(2026-08-27).
+  @Override
+  public Map<String, Object> matchPlaceCategoriesViaSbiz(int limit) {
+    var result = sbizCategoryMatchService.matchUnclassifiedPlaces(limit);
+    return Map.of(
+        "attempted", result.attempted(),
+        "matched", result.matched(),
+        "apiNoResult", result.apiNoResult(),
+        "noConfidentCandidate", result.noConfidentCandidate(),
+        "noKeywordMatch", result.noKeywordMatch(),
+        "apiError", result.apiError(),
+        "stoppedEarly", result.stoppedEarly(),
+        "closureSuspected", result.closureSuspected()
     );
   }
 

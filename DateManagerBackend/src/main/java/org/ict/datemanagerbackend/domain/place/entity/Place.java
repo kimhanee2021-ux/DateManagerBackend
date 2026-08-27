@@ -111,7 +111,9 @@ public class Place {
   private String runtimeText; // 공연시간 (KOPIS prfruntime, 예: "1시간 15분")
 
   @Setter
-  @Column(name = "price_info", length = 200)
+  // 200자로 뒀다가 KOPIS 가격안내 중 등급별 가격이 여러 줄 나열된 게 275자를 넘어서(ORA-12899,
+  // 2026-08-27) name 필드와 같은 이유로 500으로 넓힘.
+  @Column(name = "price_info", length = 500)
   private String priceInfo; // 가격 안내 (KOPIS pcseguidance, 예: "전석 50,000원")
 
   @Setter
@@ -130,6 +132,20 @@ public class Place {
   @Column(name = "performance_state", length = 20)
   private String performanceState; // 공연상태 (KOPIS prfstate: 공연예정/공연중/공연완료)
 
+  // 공연장(시설) 식별 정보(2026-08-27 추가) - KOPIS 목록조회 응답에 공연장명(fcltynm)이 오고
+  // 상세조회로 공연장 ID(mt10id, 좌표 조회에 이미 쓰던 값)도 얻어오는데, 지금까지는 좌표만 뽑아
+  // 쓰고 이 둘을 버렸다. 그래서 "이 장소(공연 하나) 말고, 같은 공연장에서 하는 다른 공연들"을
+  // 조회할 방법이 DB에 없었다 - "성남아트센터 자체가 아니라 거기서 하는 공연이 중요하다"는 제품
+  // 방향(2026-08-27) 때문에 이 그룹핑 키가 필요해짐. venueId(mt10id)로 정확히 그룹핑하고,
+  // venueName은 화면에 "○○아트센터에서 하는 다른 공연" 같은 문구를 보여줄 때 쓴다.
+  @Setter
+  @Column(name = "venue_name", length = 255)
+  private String venueName; // 공연장명 (KOPIS fcltynm)
+
+  @Setter
+  @Column(name = "venue_id", length = 20)
+  private String venueId; // 공연장 ID (KOPIS mt10id) - 같은 공연장의 다른 공연을 찾는 그룹핑 키
+
   // TourAPI(공공데이터) 좌표가 실제 위치와 수백m씩 어긋나는 사례가 있어(2026-08-20, "홍원" 건 -
   // mapx/mapy 자체가 원본에서부터 틀림) PlaceCoordinateVerificationService가 주소 기반으로 카카오와
   // 대조해 한 번 검증한 장소는 true로 표시한다. TourApiSyncServiceImpl의 매일 새벽 재동기화가
@@ -137,5 +153,21 @@ public class Place {
   @Setter
   @Column(name = "coordinate_verified")
   private Boolean coordinateVerified;
+
+  // TourAPI detailIntro2/detailImage2 상세정보 동기화(2026-08-26 추가)를 이미 한 번 시도했는지
+  // 표시한다. 개발계정 일일 호출 제한(1,000건) 안에서 나눠 돌려야 해서, 매 배치마다 이미 처리한
+  // 장소를 건너뛰고 안 한 장소부터 이어가기 위한 커서 역할. 응답이 비어있어도(정보 없음) true로
+  // 표시해 같은 장소를 매번 다시 시도하지 않는다.
+  @Setter
+  @Column(name = "detail_synced")
+  private Boolean detailSynced;
+
+  // 폐업 추정 플래그(2026-08-27) - 소상공인 API + 카카오 로컬 검색 둘 다에서 이름 일치 후보를
+  // 못 찾은 경우에만 세운다(하나만 없는 건 그 소스의 커버리지 문제일 수 있어 근거로 약함).
+  // 바로 삭제하지 않고 표시만 해두는 이유는 Place 엔티티 상단 주석 참고 - 사람이 검토 후 삭제할
+  // "의심 목록"이지, 자동 삭제 대상이 아니다.
+  @Setter
+  @Column(name = "closure_suspected")
+  private Boolean closureSuspected;
 
 }

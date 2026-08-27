@@ -19,6 +19,29 @@ public final class PlaceCategoryKeywords {
       "박물관/미술관", "박물관·미술관"
   );
 
+  // 소상공인시장진흥공단 상가정보 API가 내려주는 표준 업종명(예: "한식음식점", "커피전문점")을
+  // 매칭하기 위해 추가(2026-08-27) - place_categories에는 이미 한식/중식/일식/양식/아시아음식/
+  // 분식/뷔페/카페(일반)/카페(브런치) 세부분류(id 101~110)가 있었지만 키워드 테이블이 비어있어서
+  // 실제로는 한 번도 매칭에 쓰이지 않고 있었다. 순서가 중요 - "이자카야"는 "술집/포차/이자카야"가
+  // 먼저 걸리게 위쪽에 남겨두고, 신규 업종 키워드는 그 아래에 추가한다.
+  private static Map<String, List<String>> buildOrderedRestaurantKeywords() {
+    Map<String, List<String>> m = new java.util.LinkedHashMap<>();
+    m.put("조용한 다이닝(파인다이닝/오마카세)", List.of("파인다이닝", "오마카세"));
+    m.put("술집/포차/이자카야", List.of("이자카야", "포차", "호프", "와인바"));
+    m.put("로컬 노포/전통시장", List.of("노포"));
+    m.put("캐주얼 맛집/브런치", List.of("브런치"));
+    m.put("카페(브런치)", List.of("브런치카페"));
+    m.put("카페(일반)", List.of("카페", "커피전문점", "커피", "로스터리", "베이커리카페"));
+    m.put("식당(한식)", List.of("한식", "한정식", "백반"));
+    m.put("식당(중식)", List.of("중식", "중국집", "짜장면", "짬뽕"));
+    m.put("식당(일식)", List.of("일식", "초밥", "스시", "라멘", "돈카츠"));
+    m.put("식당(양식)", List.of("양식", "파스타", "스테이크", "피자"));
+    m.put("식당(아시아음식)", List.of("베트남음식", "태국음식", "쌀국수", "팟타이", "인도음식", "커리"));
+    m.put("식당(분식)", List.of("분식", "떡볶이", "순대"));
+    m.put("식당(뷔페)", List.of("뷔페"));
+    return m;
+  }
+
   private static Map<String, List<String>> buildOrderedShoppingKeywords() {
     Map<String, List<String>> m = new java.util.LinkedHashMap<>();
     m.put("야시장", List.of("야시장"));
@@ -32,12 +55,7 @@ public final class PlaceCategoryKeywords {
 
   // parentCategory -> (subCategory -> 이름/네이버 카테고리에 포함되어 있으면 그 세부분류로 판단할 키워드 목록).
   public static final Map<String, Map<String, List<String>>> KEYWORDS = Map.ofEntries(
-      Map.entry("맛집", Map.of(
-          "조용한 다이닝(파인다이닝/오마카세)", List.of("파인다이닝", "오마카세"),
-          "캐주얼 맛집/브런치", List.of("브런치"),
-          "술집/포차/이자카야", List.of("이자카야", "포차", "호프", "와인바"),
-          "로컬 노포/전통시장", List.of("노포")
-      )),
+      Map.entry("맛집", buildOrderedRestaurantKeywords()),
       Map.entry("공연", Map.of(
           "클래식/오페라", List.of("클래식", "오페라"),
           "뮤지컬", List.of("뮤지컬"),

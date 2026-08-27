@@ -258,6 +258,20 @@ public class AiChatServiceImpl implements AiChatService {
       AI: "%s"
       """;
 
+  // 홈탭 "최근 관심사" 인사이트 한 줄 생성용(2026-08-27 추가) - 원래는 의도 태그 1위만 뽑아서
+  // "OO를 가장 많이 물어봤어요"라고 기계적으로 채워 넣었는데, 전체 분포를 보여주고 자연스러운
+  // 문장으로 다듬어달라고 하면 훨씬 사람이 쓴 것 같은 코멘트가 나온다.
+  private static final String INTENT_INSIGHT_PROMPT = """
+      다음은 한 유저가 AI 데이트 코치와 나눈 대화에서 뽑힌 대화 주제별 횟수야:
+      %s
+
+      이 데이터를 보고, 유저의 최근 관심사를 짚어주는 자연스러운 한 문장 코멘트를 만들어줘.
+      홈 화면 인사이트 칩에 들어갈 짧은 문장이야. 조건:
+      - 30자 내외, 존댓말체("~하고 계시네요" 등)
+      - 이모지, 따옴표, 설명 없이 문장 하나만 출력
+      - 숫자(횟수)는 언급하지 말고 경향만 자연스럽게 표현
+      """;
+
   // 대화 중 후속 질문 추천용(2026-08-22 추가) - 사용자가 매번 처음부터 뭘 물어볼지 고민하지 않아도
   // 되게, 방금 오간 대화에 자연스럽게 이어질 질문을 AI가 직접 골라서 클릭 한 번으로 보낼 수 있게 한다.
   private static final String FOLLOWUP_PROMPT = """
@@ -641,12 +655,12 @@ public class AiChatServiceImpl implements AiChatService {
           org.springframework.data.domain.Sort.by(org.springframework.data.domain.Sort.Direction.DESC, "id");
       for (String category : List.of("맛집", "전시", "박물관·미술관", "관광지", "액티비티", "쇼핑")) {
         pool.addAll(placeRepository.searchByCategoryIn(
-            CATEGORY_ALIASES.get(category), null, "", null, null, null, null, false, false, null,
+            CATEGORY_ALIASES.get(category), null, "", null, null, null, null, false, false, null, false,
             org.springframework.data.domain.PageRequest.of(0, 20, byIdDesc)).getContent());
       }
       for (String category : List.of("공연", "숙박")) {
         pool.addAll(placeRepository.searchByCategoryIn(
-            CATEGORY_ALIASES.get(category), null, "", null, null, null, null, false, false, null,
+            CATEGORY_ALIASES.get(category), null, "", null, null, null, null, false, false, null, false,
             org.springframework.data.domain.PageRequest.of(0, 8, byIdDesc)).getContent());
       }
     }
@@ -777,7 +791,12 @@ public class AiChatServiceImpl implements AiChatService {
       "GENERAL_CHAT", "일상 대화"
   );
 
-  /** 저장만 되고 안 쓰이던 의도 태그(AiChatMessageIntent)를 처음으로 집계해서 재활용한다. */
+  /**
+   * 저장만 되고 안 쓰이던 의도 태그(AiChatMessageIntent)를 집계해서 재활용한다. 전체 분포를
+   * OpenAI에 한 번 더 보내 자연어 인사이트 문장을 붙이고, 실패하면(네트워크 오류 등) insight만
+   * null로 남겨서 프론트가 기존 템플릿 문구로 대체하게 한다 - 다른 부가 AI 기능들과 동일한
+   * "실패해도 화면이 비면 안 된다" 원칙.
+   */
   @Override
   public org.ict.datemanagerbackend.domain.aichat.dto.IntentSummaryDto getIntentSummary(User user) {
     List<Object[]> counts = aiChatMessageIntentRepository.countIntentTagsByUserId(user.getId());
@@ -786,8 +805,31 @@ public class AiChatServiceImpl implements AiChatService {
     Object[] top = counts.get(0);
     String tag = (String) top[0];
     long count = ((Number) top[1]).longValue();
+
+    String insight = null;
+    try {
+      insight = requestIntentInsight(counts);
+    } catch (Exception e) {
+      log.warn("의도 요약 인사이트 생성 실패 (userId={})", user.getId(), e);
+    }
+
     return new org.ict.datemanagerbackend.domain.aichat.dto.IntentSummaryDto(
-        tag, INTENT_LABELS.getOrDefault(tag, tag), count);
+        tag, INTENT_LABELS.getOrDefault(tag, tag), count, insight);
+  }
+
+  /** 의도 태그 분포([tag, count] 목록)를 사람이 읽는 텍스트로 바꿔서 인사이트 프롬프트에 채워 넣는다. */
+  private String requestIntentInsight(List<Object[]> counts) {
+    String distribution = counts.stream()
+        .map(row -> {
+          String tag = (String) row[0];
+          long count = ((Number) row[1]).longValue();
+          return "%s: %d회".formatted(INTENT_LABELS.getOrDefault(tag, tag), count);
+        })
+        .collect(java.util.stream.Collectors.joining(", "));
+
+    String content = requestChatCompletionText(INTENT_INSIGHT_PROMPT.formatted(distribution), false);
+    if (content == null || content.isBlank()) return null;
+    return content.trim().replaceAll("^[\"']|[\"']$", "");
   }
 
   /** requestResponse()의 반환값 - 답변 텍스트와, 다음 턴에 이어 보낼 응답 id를 함께 담는다. */

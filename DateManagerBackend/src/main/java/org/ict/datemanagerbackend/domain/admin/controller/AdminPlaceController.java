@@ -69,6 +69,16 @@ public class AdminPlaceController {
     return ResponseEntity.ok(adminPlaceService.mergeDuplicatePlaces());
   }
 
+  // 사진 있는 TourAPI 숙박 항목 기준으로 표기 차이 때문에 dedup에서 못 걸러낸 CSV 숙박에 사진만
+  // 채워주는 일회성 백필 배치(2026-08-27).
+  @PostMapping("/backfill-lodging-images")
+  public ResponseEntity<?> backfillLodgingImagesFromTourApi(Authentication authentication) {
+    if (!adminAuthService.isAdmin(authentication)) {
+      return ResponseEntity.status(403).body(Map.of("error", "관리자만 접근할 수 있습니다"));
+    }
+    return ResponseEntity.ok(adminPlaceService.backfillLodgingImagesFromTourApi());
+  }
+
   @GetMapping("/export")
   public ResponseEntity<String> exportPlaces(Authentication authentication) {
     if (!adminAuthService.isAdmin(authentication)) {
@@ -142,6 +152,28 @@ public class AdminPlaceController {
       return ResponseEntity.status(403).body(Map.of("error", "관리자만 접근할 수 있습니다"));
     }
     return ResponseEntity.ok(adminPlaceService.matchPlaceCategoriesViaNaver(limit));
+  }
+
+  // 네이버로도 못 잡는 미분류 장소를 소상공인시장진흥공단 상가정보 API로 재분류(2026-08-27).
+  @PostMapping("/categories/sbiz-match")
+  public ResponseEntity<?> matchPlaceCategoriesViaSbiz(Authentication authentication,
+                                                        @org.springframework.web.bind.annotation.RequestParam(defaultValue = "50") int limit) {
+    if (!adminAuthService.isAdmin(authentication)) {
+      return ResponseEntity.status(403).body(Map.of("error", "관리자만 접근할 수 있습니다"));
+    }
+    return ResponseEntity.ok(adminPlaceService.matchPlaceCategoriesViaSbiz(limit));
+  }
+
+  // TourAPI 상세정보(운영시간/휴무일/입장료/주차/편의시설/사진갤러리) 동기화(2026-08-26) - 장소당
+  // API 2번(intro+image)이라 시간이 걸려서 백그라운드로 돌리고 바로 응답한다. Place.detailSynced가
+  // 커서라 여러 번 나눠 호출해도 안전(이미 시도한 장소는 자동으로 대상에서 빠짐).
+  @PostMapping("/detail-sync")
+  public ResponseEntity<?> syncTourApiDetails(Authentication authentication,
+                                               @org.springframework.web.bind.annotation.RequestParam(defaultValue = "50") int limit) {
+    if (!adminAuthService.isAdmin(authentication)) {
+      return ResponseEntity.status(403).body(Map.of("error", "관리자만 접근할 수 있습니다"));
+    }
+    return ResponseEntity.ok(adminPlaceService.syncTourApiDetails(limit));
   }
 
   @GetMapping("/categories/links/export")

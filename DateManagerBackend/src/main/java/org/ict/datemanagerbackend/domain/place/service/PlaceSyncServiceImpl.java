@@ -111,9 +111,14 @@ public class PlaceSyncServiceImpl implements PlaceSyncService {
   @Override
   public void syncPerformances() {
     LocalDate today = LocalDate.now();
-    // 원래 30일이었는데(공연 수가 900건대로 적었음), 너무 멀리 있는 공연까지 보여주면 티켓 오픈 전이거나
-    // 일정이 바뀔 수 있다는 트레이드오프를 감안해 60일로만 늘림.
-    List<KopisPerformanceDto> performances = fetchFromKopis(KOPIS_LIST_URL, today, today.plusDays(60));
+    // 원래 30일 -> 60일(공연 수가 900건대로 적었음, 티켓 오픈 전/일정변경 트레이드오프 감안)을 거쳐
+    // 문화생활 콘텐츠 비중을 더 늘리기 위해 120일로 재확장(2026-08-26) - 같은 트레이드오프는 여전히
+    // 있지만, 문화생활이 메인 테마인 서비스에서 공연 데이터가 12%대로 너무 적다고 판단해 감수함.
+    // stdate를 today로 두면 KOPIS가 "공연시작일(prfpdfrom)이 stdate 이후"인 것만 내려줘서, 이미
+    // 시작한(공연중인) 공연이 통째로 빠지는 문제가 있었다(실측 확인, 2026-08-26) - stdate를 180일
+    // 전으로 넉넉히 당겨서 이미 시작한 공연도 후보에 넣고, 그중 이미 종료된 건 upsertAll에서 걸러낸다.
+    List<KopisPerformanceDto> performances =
+        fetchFromKopis(KOPIS_LIST_URL, today.minusDays(180), today.plusDays(120));
 
     // 장르(genrenm)를 그대로 카테고리로 사용 - 뮤지컬/연극/국악 등
     UpsertResult result = upsertAll(performances, KopisPerformanceDto::genrenm);
@@ -132,7 +137,9 @@ public class PlaceSyncServiceImpl implements PlaceSyncService {
   @Override
   public void syncFestivals() {
     LocalDate today = LocalDate.now();
-    List<KopisPerformanceDto> festivals = fetchFromKopis(KOPIS_FESTIVAL_URL, today, today.plusDays(60));
+    // syncPerformances와 동일한 이유로 stdate를 180일 전으로 당김(이미 시작한 축제도 후보에 포함).
+    List<KopisPerformanceDto> festivals =
+        fetchFromKopis(KOPIS_FESTIVAL_URL, today.minusDays(180), today.plusDays(120));
 
     UpsertResult result = upsertAll(festivals, p -> "축제");
 
@@ -240,6 +247,7 @@ public class PlaceSyncServiceImpl implements PlaceSyncService {
   /** 공연/축제 목록을 upsert하는 공통 로직. categoryFn으로 이 목록에 적용할 카테고리를 결정한다. */
   private UpsertResult upsertAll(List<KopisPerformanceDto> performances,
                                   java.util.function.Function<KopisPerformanceDto, String> categoryFn) {
+    LocalDate today = LocalDate.now();
     // 같은 공연시설(mt10id)을 여러 공연이 공유하는 경우가 많아, 시설 상세조회는 한 번만 호출하고 캐시해서 재사용
     Map<String, KopisFacilityDto> facilityCache = new HashMap<>();
 
@@ -279,6 +287,13 @@ public class PlaceSyncServiceImpl implements PlaceSyncService {
       LocalDate endDate = parseKopisDate(p.prfpdto());
       Integer openRun = "Y".equals(p.openrun()) ? 1 : 0;
 
+      // stdate를 과거로 넓혀서(이미 시작한 공연도 잡히게) 조회하다 보니, 이미 끝난 공연까지 새로
+      // 들어올 수 있다(2026-08-26) - 처음 보는 공연인데 이미 끝났으면 넣을 필요가 없다. 반대로
+      // 이미 우리 DB에 있던 공연(예전엔 예정이었다가 끝난 경우)은 상태 갱신을 위해 그대로 업데이트한다.
+      if (existing.isEmpty() && endDate != null && endDate.isBefore(today)) {
+        continue;
+      }
+
       if (existing.isPresent()) {
         // 이미 있으면 새로 만들지 않고, 최신 값으로 덮어씀 (update)
         Place place = existing.get();
@@ -292,6 +307,8 @@ public class PlaceSyncServiceImpl implements PlaceSyncService {
         place.setEndDate(endDate);
         place.setIsOpenRun(openRun);
         place.setPerformanceState(p.prfstate());
+        place.setVenueName(p.fcltynm());
+        if (mt10id != null) place.setVenueId(mt10id);
         if (detail != null) {
           place.setRuntimeText(detail.prfruntime());
           place.setPriceInfo(detail.pcseguidance());
@@ -315,6 +332,8 @@ public class PlaceSyncServiceImpl implements PlaceSyncService {
             .endDate(endDate)
             .isOpenRun(openRun)
             .performanceState(p.prfstate())
+            .venueName(p.fcltynm())
+            .venueId(mt10id)
             .runtimeText(detail != null ? detail.prfruntime() : null)
             .priceInfo(detail != null ? detail.pcseguidance() : null)
             .showTimeInfo(detail != null ? detail.dtguidance() : null)

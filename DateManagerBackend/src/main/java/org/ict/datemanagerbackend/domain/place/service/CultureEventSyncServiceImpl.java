@@ -61,6 +61,10 @@ public class CultureEventSyncServiceImpl implements CultureEventSyncService {
   @Value("${tourapi.service-key}")
   private String serviceKey;
 
+  // 좌표->실제 도로명주소 역지오코딩용(2026-08-27, 사용자 요청) - KakaoPlaceSyncServiceImpl과 같은 키.
+  @Value("${kakao.rest-api-key}")
+  private String kakaoRestApiKey;
+
   /** 매일 새벽 4시 45분에 자동 실행됨 (박물관 4시30분 다음으로 배치). */
   @Scheduled(cron = "0 45 4 * * *")
   @Override
@@ -83,7 +87,11 @@ public class CultureEventSyncServiceImpl implements CultureEventSyncService {
 
       Double lng = parseCoordinate(e.gpsX());
       Double lat = parseCoordinate(e.gpsY());
-      String address = e.place();
+      // e.place()는 시설명("국립현대미술관 서울관")일 뿐 실제 주소가 아니다(2026-08-27 사용자 지적 -
+      // "주소를 불러올 때 해당 장소가 나와야"). 좌표를 카카오로 역지오코딩해 실제 도로명주소를 얻고,
+      // 실패하면(카카오 API 오류 등) 시설명으로 폴백한다.
+      String address = reverseGeocodeAddress(lat, lng);
+      if (address == null) address = e.place();
 
       Optional<Place> existing = placeRepository.findByExternalSourceAndExternalId(EXTERNAL_SOURCE, e.seq());
       if (existing.isPresent()) {
@@ -93,6 +101,11 @@ public class CultureEventSyncServiceImpl implements CultureEventSyncService {
         place.setAddress(address);
         place.setLatitude(lat);
         place.setLongitude(lng);
+        // "국립현대미술관 서울관" 같은 장소명을 venueName에도 저장한다(2026-08-27) - "같은 미술관의
+        // 다른 전시" 그룹핑용(공연/공연장과 같은 방향). 이 API는 KOPIS의 mt10id 같은 깔끔한 시설
+        // ID가 없어서 venueId는 비워두고, venue-performances 조회 쪽에서 venueName 일치로 대신
+        // 그룹핑한다.
+        place.setVenueName(e.place());
         if (e.thumbnail() != null && !e.thumbnail().isBlank()) {
           place.setImageUrl(e.thumbnail());
         }
@@ -118,6 +131,7 @@ public class CultureEventSyncServiceImpl implements CultureEventSyncService {
           .imageUrl(e.thumbnail())
           .externalSource(EXTERNAL_SOURCE)
           .externalId(e.seq())
+          .venueName(e.place())
           .build();
       placeRepository.save(place);
       created++;
@@ -200,6 +214,35 @@ public class CultureEventSyncServiceImpl implements CultureEventSyncService {
     if (nl.getLength() == 0) return null;
     String value = nl.item(0).getTextContent();
     return (value == null || value.isBlank()) ? null : value;
+  }
+
+  // 좌표 -> 실제 도로명주소 역지오코딩(2026-08-27). PlaceController.reverseGeocodeRegion(coord2regioncode,
+  // "시/도"만 줌)보다 더 구체적인 coord2address로 도로명/지번 주소까지 받는다. 도로명주소가 있으면
+  // 그걸, 없으면(신축 건물 등) 지번주소로 대체한다. 실패하면 null - 호출부가 시설명으로 폴백한다.
+  private String reverseGeocodeAddress(Double lat, Double lon) {
+    if (lat == null || lon == null) return null;
+    String url = UriComponentsBuilder.fromUriString("https://dapi.kakao.com/v2/local/geo/coord2address.json")
+        .queryParam("x", lon)
+        .queryParam("y", lat)
+        .toUriString();
+    try {
+      org.springframework.http.HttpHeaders headers = new org.springframework.http.HttpHeaders();
+      headers.add("Authorization", "KakaoAK " + kakaoRestApiKey);
+      tools.jackson.databind.JsonNode root = restTemplate.exchange(
+          java.net.URI.create(url), org.springframework.http.HttpMethod.GET,
+          new org.springframework.http.HttpEntity<>(null, headers), tools.jackson.databind.JsonNode.class
+      ).getBody();
+      if (root == null) return null;
+      tools.jackson.databind.JsonNode first = root.path("documents").get(0);
+      if (first == null) return null;
+      String roadAddress = first.path("road_address").path("address_name").asText("");
+      if (!roadAddress.isBlank()) return roadAddress;
+      String jibunAddress = first.path("address").path("address_name").asText("");
+      return jibunAddress.isBlank() ? null : jibunAddress;
+    } catch (Exception e) {
+      log.warn("좌표 역지오코딩 실패 (lat={}, lon={})", lat, lon, e);
+      return null;
+    }
   }
 
   private Double parseCoordinate(String value) {
