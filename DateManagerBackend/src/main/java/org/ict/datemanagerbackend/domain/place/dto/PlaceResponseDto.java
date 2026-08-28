@@ -42,7 +42,8 @@ public record PlaceResponseDto(
     String genreName,
     String emoji,
     String venueName,
-    String venueId
+    String venueId,
+    String venueImageUrl
 ) {
 
   public static PlaceResponseDto from(Place place, PlaceStyle style) {
@@ -85,7 +86,8 @@ public record PlaceResponseDto(
         // 있으면 그걸, 없으면 null(프론트가 기본 📍로 폴백).
         category != null ? category.getEmoji() : null,
         place.getVenueName(),
-        place.getVenueId()
+        place.getVenueId(),
+        place.getVenueImageUrl()
     );
   }
 }

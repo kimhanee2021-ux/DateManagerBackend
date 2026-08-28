@@ -309,6 +309,9 @@ public class PlaceSyncServiceImpl implements PlaceSyncService {
         place.setPerformanceState(p.prfstate());
         place.setVenueName(p.fcltynm());
         if (mt10id != null) place.setVenueId(mt10id);
+        if (place.getVenueImageUrl() == null) {
+          place.setVenueImageUrl(org.ict.datemanagerbackend.domain.place.init.VenueImages.resolve(p.fcltynm()));
+        }
         if (detail != null) {
           place.setRuntimeText(detail.prfruntime());
           place.setPriceInfo(detail.pcseguidance());
@@ -334,6 +337,7 @@ public class PlaceSyncServiceImpl implements PlaceSyncService {
             .performanceState(p.prfstate())
             .venueName(p.fcltynm())
             .venueId(mt10id)
+            .venueImageUrl(org.ict.datemanagerbackend.domain.place.init.VenueImages.resolve(p.fcltynm()))
             .runtimeText(detail != null ? detail.prfruntime() : null)
             .priceInfo(detail != null ? detail.pcseguidance() : null)
             .showTimeInfo(detail != null ? detail.dtguidance() : null)

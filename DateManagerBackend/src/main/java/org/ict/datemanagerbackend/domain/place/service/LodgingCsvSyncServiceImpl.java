@@ -7,6 +7,8 @@ import org.apache.commons.csv.CSVFormat;
 import org.apache.commons.csv.CSVParser;
 import org.apache.commons.csv.CSVRecord;
 import org.ict.datemanagerbackend.domain.place.entity.Place;
+import org.ict.datemanagerbackend.domain.place.entity.PlaceCategory;
+import org.ict.datemanagerbackend.domain.place.repository.PlaceCategoryRepository;
 import org.ict.datemanagerbackend.domain.place.repository.PlaceRepository;
 import org.ict.datemanagerbackend.domain.place.repository.PlaceStyleRepository;
 import org.springframework.beans.factory.annotation.Value;
@@ -48,6 +50,7 @@ public class LodgingCsvSyncServiceImpl implements LodgingCsvSyncService {
   private final PlaceRepository placeRepository;
   private final PlaceStyleRepository placeStyleRepository;
   private final PlaceDedupService placeDedupService;
+  private final PlaceCategoryRepository placeCategoryRepository;
 
   @Value("${place.lodging-csv-path}")
   private String csvPath;
@@ -101,9 +104,20 @@ public class LodgingCsvSyncServiceImpl implements LodgingCsvSyncService {
           continue;
         }
 
+        // "숙박업" CSV엔 야영장(캠핑장)도 숙박업 인허가로 등록돼 같이 섞여 들어온다 - 텐트/글램핑은
+        // 호텔·펜션과 성향축 자체가 다른데(액티비티 성향 vs 로컬↔프리미엄) 전부 "숙박"으로 뭉뚱그려져
+        // 있었다(2026-08-28 사용자 지적). 이름에 "캠핑"/"글램핑"이 있으면 TourAPI 소스와 동일하게
+        // 액티비티>캠핑/글램핑으로 분류한다.
+        boolean isCamping = name.contains("캠핑") || name.contains("글램핑");
+        String category = isCamping ? "액티비티" : CATEGORY;
+        PlaceCategory placeCategory = isCamping
+            ? placeCategoryRepository.findByParentCategoryAndSubCategory("액티비티", "캠핑/글램핑").orElse(null)
+            : null;
+
         Place place = Place.builder()
             .name(name)
-            .category(CATEGORY)
+            .category(category)
+            .placeCategory(placeCategory)
             .address(address)
             .latitude(lat)
             .longitude(lon)

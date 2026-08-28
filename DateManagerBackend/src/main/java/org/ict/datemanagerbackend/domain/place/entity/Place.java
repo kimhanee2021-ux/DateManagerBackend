@@ -146,6 +146,13 @@ public class Place {
   @Column(name = "venue_id", length = 20)
   private String venueId; // 공연장 ID (KOPIS mt10id) - 같은 공연장의 다른 공연을 찾는 그룹핑 키
 
+  // 공연장(건물) 자체의 대표사진(2026-08-28) - imageUrl은 공연 포스터라 건드리지 않고 별도 필드로
+  // 둔다. 위키미디어에서 venueName으로 검색해 유명한 공연장만 채워지는, MuseumSyncServiceImpl의
+  // NAME_IMAGES와 같은 접근(VenueImages 참고).
+  @Setter
+  @Column(name = "venue_image_url", length = 500)
+  private String venueImageUrl;
+
   // TourAPI(공공데이터) 좌표가 실제 위치와 수백m씩 어긋나는 사례가 있어(2026-08-20, "홍원" 건 -
   // mapx/mapy 자체가 원본에서부터 틀림) PlaceCoordinateVerificationService가 주소 기반으로 카카오와
   // 대조해 한 번 검증한 장소는 true로 표시한다. TourApiSyncServiceImpl의 매일 새벽 재동기화가

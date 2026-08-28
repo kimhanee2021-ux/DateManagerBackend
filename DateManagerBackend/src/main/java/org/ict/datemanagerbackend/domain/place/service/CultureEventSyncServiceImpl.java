@@ -109,6 +109,9 @@ public class CultureEventSyncServiceImpl implements CultureEventSyncService {
         if (e.thumbnail() != null && !e.thumbnail().isBlank()) {
           place.setImageUrl(e.thumbnail());
         }
+        if (place.getVenueImageUrl() == null) {
+          place.setVenueImageUrl(org.ict.datemanagerbackend.domain.place.init.VenueImages.resolve(e.place()));
+        }
         placeRepository.save(place);
         updated++;
         continue;
@@ -132,6 +135,7 @@ public class CultureEventSyncServiceImpl implements CultureEventSyncService {
           .externalSource(EXTERNAL_SOURCE)
           .externalId(e.seq())
           .venueName(e.place())
+          .venueImageUrl(org.ict.datemanagerbackend.domain.place.init.VenueImages.resolve(e.place()))
           .build();
       placeRepository.save(place);
       created++;

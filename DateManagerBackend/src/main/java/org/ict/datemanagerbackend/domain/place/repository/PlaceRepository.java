@@ -136,22 +136,29 @@ public interface PlaceRepository extends JpaRepository<Place, Long> {
 
   // 숙박 탭 카테고리 칩에 "OO곳" 개수를 보여주기 위한 대분류 안 세부분류별 집계.
   // 세부분류가 아직 안 붙은(placeCategory가 null인) 장소는 이 결과에 안 잡힌다.
+  // categories가 List인 이유: 큐레이션 칩 하나가 실제 Place.category 값 여러 개를 가리키는 경우가
+  // 있다(searchByCategoryIn과 같은 이유) - "공연" 칩은 장르명(서양음악(클래식) 등) 10개로, "전시" 칩은
+  // "문화시설"로, "박물관·미술관" 칩은 "박물관/미술관"(슬래시, 시더의 parent_category "박물관·미술관"과는
+  // 다른 값)으로 실제 저장돼 있다. 예전엔 단일 String으로 받아 칩의 id를 그대로 넘겼는데, id와 실제
+  // Place.category 값이 다른 칩(전시/공연/박물관·미술관)에서 세부칩 개수가 전부 0으로 나오는 버그가
+  // 있었다(2026-08-28 사용자가 큐레이션 탭에서 실제로 발견 - 칩을 눌러 들어가면 결과는 나오는데
+  // 칩에 찍힌 개수만 0인 상태).
   @Query("SELECT p.placeCategory.subCategory, COUNT(p) FROM Place p "
-      + "WHERE p.category = :category AND p.placeCategory IS NOT NULL "
+      + "WHERE p.category IN :categories AND p.placeCategory IS NOT NULL "
       + "GROUP BY p.placeCategory.subCategory")
-  List<Object[]> countGroupedBySubCategory(String category);
+  List<Object[]> countGroupedBySubCategory(List<String> categories);
 
   // 위와 같은 집계인데 지역까지 같이 좁힐 때 쓴다(2026-08-19, category-counts와 같은 이유).
   // r1/r2/r3/district는 위 searchByCategoryIn과 같은 이유(지역 통합 + 구시 중복이름 대응).
   @Query("SELECT p.placeCategory.subCategory, COUNT(p) FROM Place p "
-      + "WHERE p.category = :category AND p.placeCategory IS NOT NULL "
+      + "WHERE p.category IN :categories AND p.placeCategory IS NOT NULL "
       + "AND (p.address LIKE CONCAT('%', :r1, '%') "
       + "OR (:r2 IS NOT NULL AND p.address LIKE CONCAT('%', :r2, '%')) "
       + "OR (:r3 IS NOT NULL AND p.address LIKE CONCAT('%', :r3, '%'))) "
       + "AND (:district IS NULL OR p.address LIKE CONCAT('%', :district, '%')) "
       + "GROUP BY p.placeCategory.subCategory")
   List<Object[]> countGroupedBySubCategoryAndAddressContaining(
-      String category, String r1, String r2, String r3, String district);
+      List<String> categories, String r1, String r2, String r3, String district);
 
   // 홈탭 "내 주변"에서 스포츠처럼 희소한 카테고리용(2026-08-20) - findNearestPlaces(좌표 최근접 N개
   // 풀링 후 카테고리로 거르는 방식)은 전국에 몇십~몇백 곳뿐인 카테고리엔 안 맞는다. 흔한 카테고리
@@ -164,11 +171,17 @@ public interface PlaceRepository extends JpaRepository<Place, Long> {
   // (사용자가 실제로 이 문제를 지적함). null이면(스포츠처럼 세부분류 구분이 필요 없는 카테고리)
   // 대분류만으로 걸러 기존과 동일하게 동작한다 - LEFT JOIN인 이유는 searchByCategoryIn과 같다
   // (세부분류 미연결 장소가 subCategory 조건 없을 때 결과에서 안 빠지게).
+  // startDate >= :today(2026-08-28 추가): 이 필터가 없으면 "곧 열리는 순"이 아니라 "날짜가 이른 순"이
+  // 돼서, 어제 끝난 경기가 정리 배치(하루 1회) 전까지 남아있는 동안 그게 오늘/내일 경기보다 먼저
+  // 나오는 문제가 있었다(스포츠 3연전에서 실측 - 사용자 지적). startDate가 없는 장소(날짜 개념이 없는
+  // 카테고리)까지 이 필터로 걸러지면 안 되니 null 허용.
   @Query("SELECT p FROM Place p LEFT JOIN p.placeCategory pc WHERE p.category = :category "
       + "AND (:subCategory IS NULL OR pc.subCategory = :subCategory) "
       + "AND p.address LIKE CONCAT('%', :addressKeyword, '%') "
+      + "AND (p.startDate IS NULL OR p.startDate >= :today) "
       + "ORDER BY p.startDate ASC")
-  List<Place> findSparseByCategoryAndAddress(String category, String subCategory, String addressKeyword);
+  List<Place> findSparseByCategoryAndAddress(String category, String subCategory, String addressKeyword,
+                                              java.time.LocalDate today);
 
   // 이름에 특정 키워드가 포함된 장소를 찾는다 - 프랜차이즈/체인점 블랙리스트 정리용
   // (TourApiSyncService.cleanupBlacklistedPlaces() 참고).
