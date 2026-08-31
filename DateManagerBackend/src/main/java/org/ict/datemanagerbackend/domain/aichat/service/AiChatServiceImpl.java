@@ -258,6 +258,20 @@ public class AiChatServiceImpl implements AiChatService {
       AI: "%s"
       """;
 
+  // 홈탭 "최근 관심사" 인사이트 한 줄 생성용(2026-08-27 추가) - 원래는 의도 태그 1위만 뽑아서
+  // "OO를 가장 많이 물어봤어요"라고 기계적으로 채워 넣었는데, 전체 분포를 보여주고 자연스러운
+  // 문장으로 다듬어달라고 하면 훨씬 사람이 쓴 것 같은 코멘트가 나온다.
+  private static final String INTENT_INSIGHT_PROMPT = """
+      다음은 한 유저가 AI 데이트 코치와 나눈 대화에서 뽑힌 대화 주제별 횟수야:
+      %s
+
+      이 데이터를 보고, 유저의 최근 관심사를 짚어주는 자연스러운 한 문장 코멘트를 만들어줘.
+      홈 화면 인사이트 칩에 들어갈 짧은 문장이야. 조건:
+      - 30자 내외, 존댓말체("~하고 계시네요" 등)
+      - 이모지, 따옴표, 설명 없이 문장 하나만 출력
+      - 숫자(횟수)는 언급하지 말고 경향만 자연스럽게 표현
+      """;
+
   // 대화 중 후속 질문 추천용(2026-08-22 추가) - 사용자가 매번 처음부터 뭘 물어볼지 고민하지 않아도
   // 되게, 방금 오간 대화에 자연스럽게 이어질 질문을 AI가 직접 골라서 클릭 한 번으로 보낼 수 있게 한다.
   private static final String FOLLOWUP_PROMPT = """
@@ -607,7 +621,7 @@ public class AiChatServiceImpl implements AiChatService {
    * 상위 4곳으로 조용히 대체한다(챗봇의 다른 부가 기능들과 같은 원칙 - 실패해도 화면이 비면 안 됨).
    */
   @Override
-  public List<org.ict.datemanagerbackend.domain.aichat.dto.CourseRecommendationDto> recommendCourse(User user) {
+  public List<org.ict.datemanagerbackend.domain.aichat.dto.CourseRecommendationDto> recommendCourse(User user, Double lat, Double lon) {
     org.ict.datemanagerbackend.domain.user.entity.UserStyle style =
         userStyleRepository.findById(user.getId()).orElse(null);
 
@@ -619,23 +633,36 @@ public class AiChatServiceImpl implements AiChatService {
     userScores.put("depth", styleAxisOrDefault(style == null ? null : style.getInitDepth()));
     userScores.put("pacing", styleAxisOrDefault(style == null ? null : style.getInitPacing()));
 
-    // 카테고리별로 나눠서 후보를 모은다(2026-08-25) - searchAll로 최신 id 순 150개를 통째로 가져오면
-    // 한 카테고리(예: 콘서트 임포트 배치)가 몰려서 매칭점수 상위가 전부 같은 카테고리로 쏠리는 문제가
-    // 있었다("코스 추천이 콘서트 4개만 골라줌" - 실사용 테스트로 발견). 데이트 코스로 하루에 돌 만한
-    // 카테고리 위주로 나눠 모아서, 후보 풀 자체에 다양성을 만들어둔다.
-    List<Place> pool = new ArrayList<>();
-    org.springframework.data.domain.Sort byIdDesc =
-        org.springframework.data.domain.Sort.by(org.springframework.data.domain.Sort.Direction.DESC, "id");
-    for (String category : List.of("맛집", "전시", "박물관·미술관", "관광지", "액티비티", "쇼핑")) {
-      pool.addAll(placeRepository.searchByCategoryIn(
-          CATEGORY_ALIASES.get(category), null, "", null, null, null, null, false, false, null,
-          org.springframework.data.domain.PageRequest.of(0, 20, byIdDesc)).getContent());
-    }
-    // 공연/숙박은 코스 하나를 통째로 채우면 안 되는 성격이라(시간 고정, 숙박은 마지막 한 곳) 적게만 섞는다.
-    for (String category : List.of("공연", "숙박")) {
-      pool.addAll(placeRepository.searchByCategoryIn(
-          CATEGORY_ALIASES.get(category), null, "", null, null, null, null, false, false, null,
-          org.springframework.data.domain.PageRequest.of(0, 8, byIdDesc)).getContent());
+    List<Place> pool;
+    if (lat != null && lon != null) {
+      // 내 위치 반경 10km 이내로만 추천(2026-08-25 추가) - 예전엔 지역 필터가 전혀 없어서 서울/
+      // 부산/제주가 한 코스에 섞여 나오는 문제가 있었다("지역이 너무 넓다" 실사용 피드백). 위경도
+      // 사각형으로 넉넉히 1차로 추린 뒤, haversine으로 정확한 원형 10km만 다시 거른다 - 카테고리별로
+      // 나눠 모으던 예전 방식(다양성 확보용)은 이제 필요 없다. 반경 안에 있는 장소들 자체가 이미
+      // 카테고리가 섞여 있고, 카테고리 쏠림 방지 로직은 아래에서 그대로 유지된다.
+      double latDelta = 10.0 / 111.32; // 위도 1도 ≈ 111.32km
+      double lonDelta = 10.0 / (111.32 * Math.cos(Math.toRadians(lat)));
+      List<Place> boxCandidates = placeRepository.findByLatitudeBetweenAndLongitudeBetween(
+          lat - latDelta, lat + latDelta, lon - lonDelta, lon + lonDelta,
+          org.springframework.data.domain.PageRequest.of(0, 400));
+      pool = boxCandidates.stream()
+          .filter(p -> haversineMeters(lat, lon, p.getLatitude(), p.getLongitude()) <= 10000)
+          .toList();
+    } else {
+      // 위치 정보가 없으면(권한 거부 등) 예전 방식(카테고리별로 나눠 모으기)으로 대체.
+      pool = new ArrayList<>();
+      org.springframework.data.domain.Sort byIdDesc =
+          org.springframework.data.domain.Sort.by(org.springframework.data.domain.Sort.Direction.DESC, "id");
+      for (String category : List.of("맛집", "전시", "박물관·미술관", "관광지", "액티비티", "쇼핑")) {
+        pool.addAll(placeRepository.searchByCategoryIn(
+            CATEGORY_ALIASES.get(category), null, "", null, null, null, null, false, false, null, false,
+            org.springframework.data.domain.PageRequest.of(0, 20, byIdDesc)).getContent());
+      }
+      for (String category : List.of("공연", "숙박")) {
+        pool.addAll(placeRepository.searchByCategoryIn(
+            CATEGORY_ALIASES.get(category), null, "", null, null, null, null, false, false, null, false,
+            org.springframework.data.domain.PageRequest.of(0, 8, byIdDesc)).getContent());
+      }
     }
 
     record Candidate(Place place, org.ict.datemanagerbackend.domain.place.entity.PlaceCategory category, int matchScore) {}
@@ -716,6 +743,17 @@ public class AiChatServiceImpl implements AiChatService {
         .toList();
   }
 
+  private double haversineMeters(double lat1, double lon1, Double lat2, Double lon2) {
+    if (lat2 == null || lon2 == null) return Double.MAX_VALUE;
+    double earthRadius = 6371000;
+    double dLat = Math.toRadians(lat2 - lat1);
+    double dLon = Math.toRadians(lon2 - lon1);
+    double a = Math.sin(dLat / 2) * Math.sin(dLat / 2)
+        + Math.cos(Math.toRadians(lat1)) * Math.cos(Math.toRadians(lat2))
+        * Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    return 2 * earthRadius * Math.asin(Math.sqrt(a));
+  }
+
   private static final String REPORT_SUMMARY_PROMPT = """
       아래는 서비스에 접수된 처리 대기 중인 신고 사유 목록이야. 관리자가 한눈에 파악할 수 있게
       요약해줘. 비슷한 유형끼리 묶어서 "- 유형: 건수, 짧은 설명" 형식의 불릿 목록으로, 전체
@@ -752,7 +790,12 @@ public class AiChatServiceImpl implements AiChatService {
       "GENERAL_CHAT", "일상 대화"
   );
 
-  /** 저장만 되고 안 쓰이던 의도 태그(AiChatMessageIntent)를 처음으로 집계해서 재활용한다. */
+  /**
+   * 저장만 되고 안 쓰이던 의도 태그(AiChatMessageIntent)를 집계해서 재활용한다. 전체 분포를
+   * OpenAI에 한 번 더 보내 자연어 인사이트 문장을 붙이고, 실패하면(네트워크 오류 등) insight만
+   * null로 남겨서 프론트가 기존 템플릿 문구로 대체하게 한다 - 다른 부가 AI 기능들과 동일한
+   * "실패해도 화면이 비면 안 된다" 원칙.
+   */
   @Override
   public org.ict.datemanagerbackend.domain.aichat.dto.IntentSummaryDto getIntentSummary(User user) {
     List<Object[]> counts = aiChatMessageIntentRepository.countIntentTagsByUserId(user.getId());
@@ -761,8 +804,31 @@ public class AiChatServiceImpl implements AiChatService {
     Object[] top = counts.get(0);
     String tag = (String) top[0];
     long count = ((Number) top[1]).longValue();
+
+    String insight = null;
+    try {
+      insight = requestIntentInsight(counts);
+    } catch (Exception e) {
+      log.warn("의도 요약 인사이트 생성 실패 (userId={})", user.getId(), e);
+    }
+
     return new org.ict.datemanagerbackend.domain.aichat.dto.IntentSummaryDto(
-        tag, INTENT_LABELS.getOrDefault(tag, tag), count);
+        tag, INTENT_LABELS.getOrDefault(tag, tag), count, insight);
+  }
+
+  /** 의도 태그 분포([tag, count] 목록)를 사람이 읽는 텍스트로 바꿔서 인사이트 프롬프트에 채워 넣는다. */
+  private String requestIntentInsight(List<Object[]> counts) {
+    String distribution = counts.stream()
+        .map(row -> {
+          String tag = (String) row[0];
+          long count = ((Number) row[1]).longValue();
+          return "%s: %d회".formatted(INTENT_LABELS.getOrDefault(tag, tag), count);
+        })
+        .collect(java.util.stream.Collectors.joining(", "));
+
+    String content = requestChatCompletionText(INTENT_INSIGHT_PROMPT.formatted(distribution), false);
+    if (content == null || content.isBlank()) return null;
+    return content.trim().replaceAll("^[\"']|[\"']$", "");
   }
 
   /** requestResponse()의 반환값 - 답변 텍스트와, 다음 턴에 이어 보낼 응답 id를 함께 담는다. */

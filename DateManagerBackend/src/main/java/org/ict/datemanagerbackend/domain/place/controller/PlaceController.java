@@ -93,6 +93,11 @@ public class PlaceController {
   private static final Set<String> SPARSE_NEARBY_CATEGORIES = Set.of("스포츠");
   private static final Set<String> SPARSE_PERFORMANCE_SUBCATEGORIES =
       Set.of("대형 콘서트(아이돌/스타디움)", "뮤직페스티벌");
+  // 캠핑/글램핑(전국 1,380곳)은 도심이 아니라 외곽·산간에 흩어져 있어서, "가까운 500곳 풀 안에서
+  // 카테고리로 거르는" 방식(listNearbyCurationPlaces의 기존 로직)으로는 도심 좌표 기준 풀 안에
+  // 하나도 안 걸려 0건이 되는 문제가 있었다(2026-08-28 사용자가 큐레이션 탭에서 실제로 발견 -
+  // "캠핑 탭 누르면 한 건도 안 뜬다"). 스포츠와 같은 이유로 지역(시/도) 기준 조회로 전환한다.
+  private static final Set<String> SPARSE_ACTIVITY_SUBCATEGORIES = Set.of("캠핑/글램핑");
 
   public PlaceController(
       PlaceRepository placeRepository,
@@ -143,6 +148,7 @@ public class PlaceController {
       @RequestParam(required = false) Integer energyTarget,
       @RequestParam(required = false) Double lat,
       @RequestParam(required = false) Double lon,
+      @RequestParam(required = false, defaultValue = "false") boolean sortByRank,
       @PageableDefault(size = 20, sort = "id", direction = Sort.Direction.DESC) Pageable pageable) {
     boolean hasCategory = category != null && !category.isBlank();
     boolean hasSubCategory = subCategory != null && !subCategory.isBlank();
@@ -172,9 +178,9 @@ public class PlaceController {
     Page<Place> page = hasCategory
         ? placeRepository.searchByCategoryIn(
             categories, hasSubCategory ? subCategory : null, r1, r2, r3, districtFilter, keywordFilter,
-            excludeOutdoor, indoorBoost, energyTarget, pageable)
+            excludeOutdoor, indoorBoost, energyTarget, sortByRank, pageable)
         : placeRepository.searchAll(
-            r1, r2, r3, districtFilter, keywordFilter, excludeOutdoor, indoorBoost, energyTarget, pageable);
+            r1, r2, r3, districtFilter, keywordFilter, excludeOutdoor, indoorBoost, energyTarget, sortByRank, pageable);
 
     List<Long> placeIds = page.getContent().stream().map(Place::getId).toList();
 
@@ -242,7 +248,7 @@ public class PlaceController {
       log.info("희소 카테고리 내 주변 조회 - category={}, subCategory={}, region={}", category, subCategory, region);
       places = region == null
           ? List.of() // 역지오코딩 실패(카카오 API 오류 등) 시 엉뚱한 전국 결과를 섞어 보여주지 않고 빈 목록
-          : placeRepository.findSparseByCategoryAndAddress(category, subCategory, region).stream()
+          : placeRepository.findSparseByCategoryAndAddress(category, subCategory, region, java.time.LocalDate.now()).stream()
               .limit(limit)
               .toList();
       log.info("희소 카테고리 조회 결과 {}건", places.size());
@@ -323,27 +329,46 @@ public class PlaceController {
       @RequestParam(required = false) String district,
       @RequestParam(required = false) String keyword,
       @RequestParam(defaultValue = "30") int limit) {
-    int pool = Math.max(limit * 20, 500);
-    List<Place> candidates = placeRepository.findNearestPlaces(lat, lon, pool);
+    boolean sparseActivity = "액티비티".equals(category)
+        && subCategory != null && SPARSE_ACTIVITY_SUBCATEGORIES.contains(subCategory);
 
-    List<String> categories = (category == null || category.isBlank())
-        ? null
-        : List.of(category.split(","));
+    List<Place> filtered;
+    if (sparseActivity) {
+      String resolvedRegion = (region != null && !region.isBlank()) ? region : reverseGeocodeRegion(lat, lon);
+      log.info("희소 세부분류 내 주변 조회 - category={}, subCategory={}, region={}", category, subCategory, resolvedRegion);
+      List<Place> sparse = resolvedRegion == null
+          ? List.of()
+          : placeRepository.findSparseByCategoryAndAddress(category, subCategory, resolvedRegion, java.time.LocalDate.now());
+      filtered = sparse.stream()
+          .filter(place -> district == null || district.isBlank()
+              || (place.getAddress() != null && place.getAddress().contains(district)))
+          .filter(place -> keyword == null || keyword.isBlank()
+              || (place.getName() != null && place.getName().contains(keyword)))
+          .limit(limit)
+          .toList();
+    } else {
+      int pool = Math.max(limit * 20, 500);
+      List<Place> candidates = placeRepository.findNearestPlaces(lat, lon, pool);
 
-    List<String> regionKeywords = (region == null || region.isBlank()) ? null : expandRegion(region);
+      List<String> categories = (category == null || category.isBlank())
+          ? null
+          : List.of(category.split(","));
 
-    List<Place> filtered = candidates.stream()
-        .filter(place -> categories == null || categories.contains(place.getCategory()))
-        .filter(place -> subCategory == null || subCategory.isBlank()
-            || (place.getPlaceCategory() != null && subCategory.equals(place.getPlaceCategory().getSubCategory())))
-        .filter(place -> regionKeywords == null
-            || (place.getAddress() != null && regionKeywords.stream().anyMatch(place.getAddress()::contains)))
-        .filter(place -> district == null || district.isBlank()
-            || (place.getAddress() != null && place.getAddress().contains(district)))
-        .filter(place -> keyword == null || keyword.isBlank()
-            || (place.getName() != null && place.getName().contains(keyword)))
-        .limit(limit)
-        .toList();
+      List<String> regionKeywords = (region == null || region.isBlank()) ? null : expandRegion(region);
+
+      filtered = candidates.stream()
+          .filter(place -> categories == null || categories.contains(place.getCategory()))
+          .filter(place -> subCategory == null || subCategory.isBlank()
+              || (place.getPlaceCategory() != null && subCategory.equals(place.getPlaceCategory().getSubCategory())))
+          .filter(place -> regionKeywords == null
+              || (place.getAddress() != null && regionKeywords.stream().anyMatch(place.getAddress()::contains)))
+          .filter(place -> district == null || district.isBlank()
+              || (place.getAddress() != null && place.getAddress().contains(district)))
+          .filter(place -> keyword == null || keyword.isBlank()
+              || (place.getName() != null && place.getName().contains(keyword)))
+          .limit(limit)
+          .toList();
+    }
 
     List<Long> placeIds = filtered.stream().map(Place::getId).toList();
     Map<Long, PlaceReality> realityByPlaceId = placeRealityRepository.findByPlace_IdIn(placeIds).stream()
@@ -405,19 +430,22 @@ public class PlaceController {
   public ResponseEntity<Map<String, Long>> getSubCategoryCounts(
       @RequestParam String category, @RequestParam(required = false) String region,
       @RequestParam(required = false) String district) {
+    // category는 콤마로 여러 값을 묶어 보낼 수 있다(searchByCategoryIn/listNearbyPlaces와 같은 이유 -
+    // 칩 하나가 실제로는 여러 Place.category 값을 가리켜야 하는 경우가 있음, 2026-08-28).
+    List<String> categories = List.of(category.split(","));
     boolean hasRegion = region != null && !region.isBlank();
     String districtFilter = (district == null || district.isBlank()) ? null : district;
     List<Object[]> rows;
     if (hasRegion) {
       List<String> regionKeywords = expandRegion(region);
       rows = placeRepository.countGroupedBySubCategoryAndAddressContaining(
-          category,
+          categories,
           regionKeywords.get(0),
           regionKeywords.size() > 1 ? regionKeywords.get(1) : null,
           regionKeywords.size() > 2 ? regionKeywords.get(2) : null,
           districtFilter);
     } else {
-      rows = placeRepository.countGroupedBySubCategory(category);
+      rows = placeRepository.countGroupedBySubCategory(categories);
     }
 
     Map<String, Long> counts = new java.util.LinkedHashMap<>();
@@ -458,6 +486,40 @@ public class PlaceController {
       }
     }
     return ResponseEntity.ok(PlaceResponseDto.from(placeOpt.get(), style));
+  }
+
+  // "성남아트센터"/"국립현대미술관 서울관"이라는 장소 자체가 아니라 거기서 하는 다른 공연·전시를
+  // 보여주는 용도(2026-08-27) - KOPIS 공연/문화정보 전시는 하나하나가 각자 Place 행이라, 같은
+  // 시설에 걸린 나머지 항목들을 모아준다. KOPIS는 깔끔한 시설 ID(venueId)로, ID가 없는 소스
+  // (문화정보 전시 등)는 장소명(venueName) 완전일치로 그룹핑한다. 둘 다 없는 장소는 빈 목록을 준다.
+  @GetMapping("/{id}/venue-performances")
+  public ResponseEntity<?> getVenuePerformances(@PathVariable Long id) {
+    Optional<Place> placeOpt = placeRepository.findById(id);
+    if (placeOpt.isEmpty()) {
+      return ResponseEntity.status(404).body(Map.of("error", "장소를 찾을 수 없습니다"));
+    }
+    Place target = placeOpt.get();
+    List<Place> siblings;
+    if (target.getVenueId() != null) {
+      siblings = placeRepository.findByVenueIdAndIdNotOrderByStartDateAsc(target.getVenueId(), id);
+    } else if (target.getVenueName() != null && !target.getVenueName().isBlank()) {
+      siblings = placeRepository.findByVenueNameAndIdNotOrderByStartDateAsc(target.getVenueName(), id);
+    } else {
+      return ResponseEntity.ok(List.of());
+    }
+    List<Long> placeIds = siblings.stream().map(Place::getId).toList();
+
+    Map<Long, PerformanceRanking> rankingByPlaceId = performanceRankingRepository.findByPlace_IdIn(placeIds).stream()
+        .collect(Collectors.toMap(r -> r.getPlace().getId(), r -> r));
+    Map<Long, PlaceStyle> styleByPlaceId = placeStyleRepository.findByPlace_IdIn(placeIds).stream()
+        .collect(Collectors.toMap(s -> s.getPlace().getId(), s -> s));
+
+    List<CurationPlaceDto> result = siblings.stream()
+        .map(place -> CurationPlaceDto.from(
+            place, place.getPlaceCategory(), null, List.of(),
+            rankingByPlaceId.get(place.getId()), styleByPlaceId.get(place.getId())))
+        .toList();
+    return ResponseEntity.ok(result);
   }
 
   // 2026-08-22 - 처음엔 찜 목록을 영속화하지 않고 "좋아요 눌렀다"는 신호만 UserStyle 갱신 엔진에

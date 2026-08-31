@@ -43,6 +43,14 @@ public class PlaceCategoryLinker implements ApplicationRunner {
       } else {
         parent = PlaceCategoryKeywords.PARENT_ALIASES.getOrDefault(rawCategory, rawCategory);
         matchedSub = place.getName() != null ? PlaceCategoryKeywords.findSubCategory(parent, place.getName()) : null;
+
+        // CultureEventSyncServiceImpl이 실제 "전시"(공공데이터 realmName) 데이터를 이 소스로만
+        // 저장하기 때문에(2026-08-28) - 키워드가 하나도 안 걸려도 "일반 전시"로 확정해도 안전하다.
+        // 반면 같은 category="문화시설"이라도 TourAPI/카카오/네이버는 도서관·문화원·영화관·콘서트홀
+        // 등이 뒤섞여 있어서 이 소스에는 이 기본값을 적용하지 않는다(사용자와 상의해 결정).
+        if (matchedSub == null && "전시".equals(parent) && "CULTUREINFO".equals(place.getExternalSource())) {
+          matchedSub = "일반 전시";
+        }
       }
 
       if (matchedSub == null) {

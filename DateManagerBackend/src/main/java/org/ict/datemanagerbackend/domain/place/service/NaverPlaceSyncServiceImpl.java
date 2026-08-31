@@ -7,6 +7,7 @@ import org.ict.datemanagerbackend.domain.place.dto.NaverLocalPlaceDto;
 import org.ict.datemanagerbackend.domain.place.entity.Place;
 import org.ict.datemanagerbackend.domain.place.repository.PlaceRepository;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
@@ -88,7 +89,16 @@ public class NaverPlaceSyncServiceImpl implements NaverPlaceSyncService {
 
   private final PlaceRepository placeRepository;
   private final PlaceDedupService placeDedupService;
-  private final RestTemplate restTemplate = new RestTemplate();
+  // 타임아웃 미설정 시 네이버 응답이 느려지면 요청이 무한정 붙잡히는 문제가 있어(2026-08-26,
+  // NaverCategoryMatchServiceImpl과 동일 원인) 짧게 끊어서 다음으로 넘어가게 한다.
+  private final RestTemplate restTemplate = buildRestTemplate();
+
+  private static RestTemplate buildRestTemplate() {
+    SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
+    factory.setConnectTimeout(3000);
+    factory.setReadTimeout(5000);
+    return new RestTemplate(factory);
+  }
 
   @Value("${naver.search.client-id}")
   private String clientId;

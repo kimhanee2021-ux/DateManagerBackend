@@ -64,6 +64,16 @@ public class PlaceReality {
   @Column(name = "parking_info", length = 100)
   private String parkingInfo; // 주차 정보
 
+  // TourAPI detailIntro2로 채워지는 필드(2026-08-26 추가) - 콘텐츠타입마다 실제 필드명이 다르지만
+  // (예: 문화시설 usetimeculture, 음식점 opentimefood) 우리 쪽에선 의미가 같아서 이 두 컬럼으로 통일한다.
+  @Setter
+  @Column(name = "use_time", length = 300)
+  private String useTime; // 이용시간/영업시간 안내 원문
+
+  @Setter
+  @Column(name = "rest_date", length = 200)
+  private String restDate; // 휴무일 안내 원문
+
   @Builder.Default
   @Column(name = "updated_at", nullable = false, updatable = false)
   private LocalDateTime updatedAt = LocalDateTime.now(); // 수정 일시

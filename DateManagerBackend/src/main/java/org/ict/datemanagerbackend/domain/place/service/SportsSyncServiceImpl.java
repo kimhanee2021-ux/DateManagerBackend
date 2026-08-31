@@ -71,6 +71,49 @@ public class SportsSyncServiceImpl implements SportsSyncService {
       "배구", "배구 직관"
   );
 
+  // 경기장명(부분 일치) -> 대표사진 URL(위키미디어 커먼즈, 2026-08-28). 카카오 로컬 API는 좌표/주소만
+  // 주고 사진이 없어서, 국내 프로스포츠 경기장은 종류가 한정적이라는 점을 이용해 직접 조성했다.
+  // 순서 무관하게 stadiumName에 키가 포함되면 매칭되므로, "대구iM뱅크파크"(축구)와
+  // "대구삼성라이온즈파크"(야구)처럼 헷갈릴 수 있는 것들은 겹치지 않게 충분히 구체적인 키를 썼다.
+  // KBL 일부(창원체육관·울산동천체육관·부산사직체육관)와 V리그 다수, 안양빙상장(아이스하키)은
+  // 위키 문서/사진 자체가 없어서 비워둠 - 추후 다른 소스로 보강 필요.
+  private static final Map<String, String> STADIUM_IMAGES = Map.ofEntries(
+      // KBO
+      Map.entry("잠실야구장", "https://upload.wikimedia.org/wikipedia/commons/f/fa/Jamsil_Baseball_Stadium_panorama_%28April_28_2017%29.jpg"),
+      Map.entry("고척스카이돔", "https://upload.wikimedia.org/wikipedia/ko/4/44/%EA%B3%A0%EC%B2%99%EC%8A%A4%EC%B9%B4%EC%9D%B4%EB%8F%94.jpg"),
+      Map.entry("인천SSG랜더스필드", "https://upload.wikimedia.org/wikipedia/commons/e/ef/20240504_IncheonSSGLandersField.jpg"),
+      Map.entry("수원KT위즈파크", "https://upload.wikimedia.org/wikipedia/commons/b/b7/20150531_KT_Wiz_vs_Doosan_Bears_%282%29.jpg"),
+      Map.entry("대전한화생명볼파크", "https://upload.wikimedia.org/wikipedia/commons/8/85/Daejeon_hanwha_Life_Ballpark_2025.jpg"),
+      Map.entry("광주기아챔피언스필드", "https://upload.wikimedia.org/wikipedia/commons/5/5c/Gwangju_Kia_Champions_Field_View_04.jpg"),
+      Map.entry("대구삼성라이온즈파크", "https://upload.wikimedia.org/wikipedia/commons/9/91/Daegu_Samseong_Lions_Park.jpg"),
+      Map.entry("사직야구장", "https://upload.wikimedia.org/wikipedia/commons/5/5a/Busan_Sajik_Stadium_20080706.JPG"),
+      Map.entry("창원NC파크", "https://upload.wikimedia.org/wikipedia/commons/b/b9/Chanwon_NC_Park.jpg"),
+      // K리그
+      Map.entry("전주월드컵경기장", "https://upload.wikimedia.org/wikipedia/commons/f/fa/Jeonju_World_Cup_Stadium_2016.jpg"),
+      Map.entry("울산문수축구경기장", "https://upload.wikimedia.org/wikipedia/commons/b/b2/Munsu_20121110_204310_5.jpg"),
+      Map.entry("포항스틸야드", "https://upload.wikimedia.org/wikipedia/commons/0/09/Pohang080413_1.jpg"),
+      Map.entry("iM뱅크파크", "https://upload.wikimedia.org/wikipedia/commons/1/1d/Daegu_DGB_Bank_Park_2019.jpg"),
+      Map.entry("인천축구전용경기장", "https://upload.wikimedia.org/wikipedia/commons/8/8f/Incheon_Soccer_Stadium_2.JPG"),
+      Map.entry("제주월드컵경기장", "https://upload.wikimedia.org/wikipedia/commons/a/af/Jejuwcstadium.jpg"),
+      Map.entry("강릉종합운동장", "https://upload.wikimedia.org/wikipedia/commons/9/9c/Gangneung_Stadium2.jpg"),
+      Map.entry("대전월드컵경기장", "https://upload.wikimedia.org/wikipedia/commons/7/76/Daejeon_World_Cup_Stadium.JPG"),
+      Map.entry("수원월드컵경기장", "https://upload.wikimedia.org/wikipedia/ko/6/62/Night_Scenary_of_BigBird.jpg"),
+      Map.entry("서울월드컵경기장", "https://upload.wikimedia.org/wikipedia/commons/b/b8/AFC_Champions_League_Final_1st_leg.jpg"),
+      Map.entry("김천종합운동장", "https://upload.wikimedia.org/wikipedia/commons/1/18/Gimcheon-Stadion.png"),
+      Map.entry("탄천종합운동장", "https://upload.wikimedia.org/wikipedia/commons/b/bb/Tanchon20100223_1.JPG"),
+      Map.entry("구덕운동장", "https://upload.wikimedia.org/wikipedia/commons/4/42/Gudeok_Stadium_3.JPG"),
+      Map.entry("이순신종합운동장", "https://upload.wikimedia.org/wikipedia/commons/4/45/Yi_Sun-sin_Stadium.JPG"),
+      Map.entry("청주종합경기장", "https://upload.wikimedia.org/wikipedia/ko/a/ae/%EC%B2%AD%EC%A3%BC_%EC%A2%85%ED%95%A9_%EA%B2%BD%EA%B8%B0%EC%9E%A54.jpg"),
+      Map.entry("목동", "https://upload.wikimedia.org/wikipedia/commons/f/f4/Mokdong_Stadium3.JPG"),
+      // KBL
+      Map.entry("고양체육관", "https://upload.wikimedia.org/wikipedia/commons/f/f7/Goyang_Gymnasium.png"),
+      Map.entry("안양체육관", "https://upload.wikimedia.org/wikipedia/commons/0/0b/Anyang_Gymnasium.png"),
+      Map.entry("원주종합체육관", "https://upload.wikimedia.org/wikipedia/commons/c/c3/231226_%EC%9B%90%EC%A3%BC%EC%A2%85%ED%95%A9%EC%B2%B4%EC%9C%A1%EA%B4%80.jpg"),
+      // V리그
+      Map.entry("삼산월드체육관", "https://upload.wikimedia.org/wikipedia/commons/f/f0/Samsan_World_Gymnasium.png"),
+      Map.entry("충무체육관", "https://upload.wikimedia.org/wikipedia/commons/e/e3/%EC%B6%A9%EB%AC%B4%EC%B2%B4%EC%9C%A1%EA%B4%80.jpg")
+  );
+
   private static final DateTimeFormatter MATCH_YMD_FORMAT = DateTimeFormatter.ofPattern("yyyyMMdd");
 
   private final PlaceRepository placeRepository;
@@ -124,6 +167,7 @@ public class SportsSyncServiceImpl implements SportsSyncService {
       String name = match.homeTeam() + " vs " + match.awayTeam();
       LocalDate matchDate = parseMatchDate(match.matchYmd());
       String showTimeInfo = formatMatchTime(match.matchTm());
+      String stadiumImage = resolveStadiumImage(match.stadiumName());
 
       if (existing.isPresent()) {
         Place place = existing.get();
@@ -136,6 +180,9 @@ public class SportsSyncServiceImpl implements SportsSyncService {
         place.setStartDate(matchDate);
         place.setShowTimeInfo(showTimeInfo);
         place.setPerformanceState("경기예정");
+        if (place.getImageUrl() == null && stadiumImage != null) {
+          place.setImageUrl(stadiumImage);
+        }
         placeRepository.save(place);
         updated++;
       } else {
@@ -146,6 +193,7 @@ public class SportsSyncServiceImpl implements SportsSyncService {
             .address(geo != null ? geo.address() : match.stadiumName())
             .latitude(geo != null ? geo.lat() : null)
             .longitude(geo != null ? geo.lng() : null)
+            .imageUrl(stadiumImage)
             .externalSource(EXTERNAL_SOURCE)
             .externalId(externalId)
             .startDate(matchDate)
@@ -241,6 +289,19 @@ public class SportsSyncServiceImpl implements SportsSyncService {
     }
 
     return all;
+  }
+
+  // 경기장명(부분 일치)으로 STADIUM_IMAGES에서 대표사진을 찾는다. API가 내려주는 stdm_han_nm 표기가
+  // 위키 문서 제목과 정확히 안 맞을 수 있어(예: "잠실종합운동장 야구장" vs 우리 키 "잠실야구장")
+  // contains()로 느슨하게 매칭한다.
+  private String resolveStadiumImage(String stadiumName) {
+    if (stadiumName == null) return null;
+    for (Map.Entry<String, String> entry : STADIUM_IMAGES.entrySet()) {
+      if (stadiumName.contains(entry.getKey()) || entry.getKey().contains(stadiumName)) {
+        return entry.getValue();
+      }
+    }
+    return null;
   }
 
   private record GeocodeResult(Double lat, Double lng, String address) {
