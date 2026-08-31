@@ -62,7 +62,10 @@ public class TourApiDetailSyncServiceImpl implements TourApiDetailSyncService {
                            String chkBaby, String chkPet, String chkCard) {
   }
 
-  // 콘텐츠타입별 detailIntro2 필드명 매핑 - 문화시설(14)만 실제 검증됨, 나머지는 공식 명명 규칙 추정.
+  // 콘텐츠타입별 detailIntro2 필드명 매핑. 2026-08-31에 전 콘텐츠타입(12/28/32/38/39) 실제 호출로
+  // 검증함 - 관광지(12)/숙박(32)/맛집(39)은 응답에 요금 관련 필드가 아예 없어서 fee가 null인 게
+  // 정상(코드 누락이 아니라 TourAPI 자체의 데이터 한계). 숙박은 룸타입별로 가격이 갈려서 원래
+  // 단일 가격 필드를 안 준다.
   private static final Map<String, FieldMap> FIELD_MAP_BY_CONTENT_TYPE = Map.of(
       "12", new FieldMap("usetime", "restdate", null, "parking", "chkbabycarriage", "chkpet", "chkcreditcard"),
       "14", new FieldMap("usetimeculture", "restdateculture", "usefee", "parkingculture",
@@ -70,7 +73,8 @@ public class TourApiDetailSyncServiceImpl implements TourApiDetailSyncService {
       "28", new FieldMap("usetimeleports", "restdateleports", "usefeeleports", "parkingleports",
           "chkbabycarriageleports", "chkpetleports", "chkcreditcardleports"),
       "32", new FieldMap("checkintime", null, null, "parkinglodging", null, "chkpetlodging", null),
-      "38", new FieldMap("opentime", "restdateshopping", null, "parkingshopping", null, null, "chkcreditcardshopping"),
+      // saleitemcost(2026-08-31 추가) - 실제 응답 검증 완료(값이 비어있는 경우도 많지만 필드 자체는 존재).
+      "38", new FieldMap("opentime", "restdateshopping", "saleitemcost", "parkingshopping", null, null, "chkcreditcardshopping"),
       "39", new FieldMap("opentimefood", "restdatefood", null, "parkingfood", null, null, "chkcreditcardfood")
   );
 
