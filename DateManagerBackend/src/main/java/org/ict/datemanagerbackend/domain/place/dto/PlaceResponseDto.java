@@ -25,6 +25,7 @@ public record PlaceResponseDto(
     Double latitude,
     Double longitude,
     String imageUrl,
+    Boolean imagePlaceholder,
     Integer scoreEnergy,
     Integer scoreImmersion,
     Integer scoreVibe,
@@ -71,6 +72,10 @@ public record PlaceResponseDto(
   public static PlaceResponseDto from(Place place, PlaceStyle style, PerformanceRanking ranking,
                                        PlaceReality reality, List<String> amenityTags) {
     PlaceCategory category = place.getPlaceCategory();
+    // 실제 사진(place.imageUrl)이 없을 때만 세부분류 대표이미지로 대체 - 사칭 방지를 위해 프론트가
+    // "실사진 준비중" 배지를 같이 띄울 수 있도록 imagePlaceholder로 대체 여부를 함께 내려준다.
+    boolean usePlaceholder = PlaceRepresentativeImageResolver.isPlaceholder(place, category);
+    String resolvedImageUrl = PlaceRepresentativeImageResolver.resolve(place, category);
     return new PlaceResponseDto(
         place.getId(),
         place.getName(),
@@ -78,7 +83,8 @@ public record PlaceResponseDto(
         place.getAddress(),
         place.getLatitude(),
         place.getLongitude(),
-        place.getImageUrl(),
+        resolvedImageUrl,
+        usePlaceholder,
         category != null ? category.getScoreEnergy() : (style != null ? style.getScoreEnergy() : null),
         category != null ? category.getScoreImmersion() : (style != null ? style.getScoreImmersion() : null),
         category != null ? category.getScoreVibe() : (style != null ? style.getScoreVibe() : null),

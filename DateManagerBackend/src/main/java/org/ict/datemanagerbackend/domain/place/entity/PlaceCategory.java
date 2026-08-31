@@ -94,4 +94,11 @@ public class PlaceCategory {
   @Column(name = "is_activity", nullable = false)
   private Integer isActivity = 0; // 액티비티 여부 (0/1)
 
+  // 세부분류 대표 이미지(2026-08-31) - 이 세부분류에 속한 장소인데 실제 사진(Place.imageUrl)이 없을 때
+  // 카드에 대신 보여줄 이미지. 특정 업체 사진이 아니라 공공누리/스톡사진 등 대표성 있는 이미지만 쓰고,
+  // 프론트는 이 이미지가 쓰였을 때 "실사진 준비중" 배지를 같이 띄워서 실제 그 장소 사진이 아님을 표시한다.
+  @Setter
+  @Column(name = "representative_image_url", length = 500)
+  private String representativeImageUrl;
+
 }
