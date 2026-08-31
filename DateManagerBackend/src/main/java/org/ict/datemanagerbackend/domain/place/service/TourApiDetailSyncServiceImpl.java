@@ -59,7 +59,11 @@ public class TourApiDetailSyncServiceImpl implements TourApiDetailSyncService {
   );
 
   private record FieldMap(String useTime, String restDate, String fee, String parking,
-                           String chkBaby, String chkPet, String chkCard) {
+                           String chkBaby, String chkPet, String chkCard, String menu) {
+    FieldMap(String useTime, String restDate, String fee, String parking,
+             String chkBaby, String chkPet, String chkCard) {
+      this(useTime, restDate, fee, parking, chkBaby, chkPet, chkCard, null);
+    }
   }
 
   // 콘텐츠타입별 detailIntro2 필드명 매핑. 2026-08-31에 전 콘텐츠타입(12/28/32/38/39) 실제 호출로
@@ -75,7 +79,9 @@ public class TourApiDetailSyncServiceImpl implements TourApiDetailSyncService {
       "32", new FieldMap("checkintime", null, null, "parkinglodging", null, "chkpetlodging", null),
       // saleitemcost(2026-08-31 추가) - 실제 응답 검증 완료(값이 비어있는 경우도 많지만 필드 자체는 존재).
       "38", new FieldMap("opentime", "restdateshopping", "saleitemcost", "parkingshopping", null, null, "chkcreditcardshopping"),
-      "39", new FieldMap("opentimefood", "restdatefood", null, "parkingfood", null, null, "chkcreditcardfood")
+      // firstmenu(2026-08-31 추가) - 대표메뉴. treatmenu(취급메뉴 목록)도 응답에 있지만 카드에 노출할
+      // 짧은 한 줄이면 충분해서 firstmenu만 저장한다.
+      "39", new FieldMap("opentimefood", "restdatefood", null, "parkingfood", null, null, "chkcreditcardfood", "firstmenu")
   );
 
   private final PlaceRepository placeRepository;
@@ -182,8 +188,9 @@ public class TourApiDetailSyncServiceImpl implements TourApiDetailSyncService {
     String restDate = textOrNull(item, fields.restDate());
     String fee = textOrNull(item, fields.fee());
     String parking = textOrNull(item, fields.parking());
+    String menu = textOrNull(item, fields.menu());
 
-    boolean hasAny = useTime != null || restDate != null || fee != null || parking != null;
+    boolean hasAny = useTime != null || restDate != null || fee != null || parking != null || menu != null;
     if (hasAny) {
       PlaceReality reality = placeRealityRepository.findByPlace_Id(place.getId())
           .orElseGet(() -> PlaceReality.builder().place(place).build());
@@ -191,6 +198,7 @@ public class TourApiDetailSyncServiceImpl implements TourApiDetailSyncService {
       if (restDate != null) reality.setRestDate(restDate);
       if (fee != null) reality.setPriceText(truncate(fee, 50));
       if (parking != null) reality.setParkingInfo(truncate(parking, 100));
+      if (menu != null) reality.setMenuInfo(truncate(menu, 300));
       placeRealityRepository.save(reality);
     }
 

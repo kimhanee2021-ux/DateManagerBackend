@@ -74,6 +74,12 @@ public class PlaceReality {
   @Column(name = "rest_date", length = 200)
   private String restDate; // 휴무일 안내 원문
 
+  // 대표메뉴(2026-08-31 추가) - TourAPI detailIntro2의 firstmenu(맛집 전용, contentTypeId=39).
+  // 다른 콘텐츠타입엔 이 필드 자체가 없어서 항상 null.
+  @Setter
+  @Column(name = "menu_info", length = 300)
+  private String menuInfo;
+
   @Builder.Default
   @Column(name = "updated_at", nullable = false, updatable = false)
   private LocalDateTime updatedAt = LocalDateTime.now(); // 수정 일시
