@@ -26,4 +26,6 @@ public interface AiChatService {
   org.ict.datemanagerbackend.domain.aichat.dto.IntentSummaryDto getIntentSummary(User user);
   // <<관리자 페이지 - 처리 대기 중인 신고 사유 목록을 받아 한눈에 볼 수 있게 요약>>
   String summarizeReports(List<String> reasons);
+  // <<장소 상세 화면 "AI 코치의 한마디" - 유저 성향과 이 장소가 왜 맞는지 짧게 설명>>
+  org.ict.datemanagerbackend.domain.aichat.dto.PlaceCoachExplanationDto explainPlace(User user, Long placeId);
 }

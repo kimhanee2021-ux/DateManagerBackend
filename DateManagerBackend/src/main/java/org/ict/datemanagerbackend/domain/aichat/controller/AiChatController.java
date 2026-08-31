@@ -138,6 +138,25 @@ public class AiChatController {
   }
 
   /**
+   * GET /api/aichat/place-coach/{placeId} - 장소 상세 화면 "AI 코치의 한마디"(2026-08-31 추가).
+   */
+  @GetMapping("/place-coach/{placeId}")
+  public ResponseEntity<?> explainPlace(Authentication authentication, @PathVariable Long placeId) {
+    if (authentication == null) {
+      return ResponseEntity.status(401).body(Map.of("error", "로그인이 필요합니다"));
+    }
+    User me = currentUser(authentication);
+    if (me == null) {
+      return ResponseEntity.status(404).body(Map.of("error", "사용자를 찾을 수 없습니다"));
+    }
+    try {
+      return ResponseEntity.ok(aiChatService.explainPlace(me, placeId));
+    } catch (IllegalArgumentException e) {
+      return ResponseEntity.status(404).body(Map.of("error", e.getMessage()));
+    }
+  }
+
+  /**
    * GET /api/aichat/intent-summary - 홈탭 "최근 관심사" 인사이트 칩용(2026-08-25 추가).
    * 대화 이력이 없으면 body 없이 204를 준다.
    */

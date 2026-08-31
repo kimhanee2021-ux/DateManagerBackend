@@ -307,12 +307,36 @@ public class AiChatServiceImpl implements AiChatService {
       %s
       """;
 
+  // 장소 상세 "AI 코치의 한마디"(2026-08-31) - 유저 성향과 장소 성향을 대조해 왜 이 장소가 맞는지
+  // 2문장 이내로 설명하게 한다. topAxes는 프론트 PERSONA_AXES(energetic/immersion/vibe/aesthetic/
+  // depth)와 이름을 맞춰서 프론트가 별도 매핑 없이 바로 성향 바를 그릴 수 있게 한다.
+  private static final String PLACE_COACH_EXPLANATION_PROMPT = """
+      아래는 사용자의 6대 성향값(0~100)과 장소 정보야. 이 장소가 왜 사용자 성향에 잘 맞는지, 애인처럼
+      편한 반말로 2문장 이내로 설명해줘. 다음 JSON 형식으로만 답해(다른 설명 없이):
+      {"message": "설명 문장", "topAxes": ["depth", "immersion"]}
+
+      규칙:
+      - topAxes는 energy/immersion/vibe/aesthetic/depth 중, 사용자 점수와 장소 점수가 둘 다 중립(50)에서
+        많이 벗어나 있고 서로 비슷한(=잘 맞는) 축을 1~2개만 골라. 특별히 두드러지는 축이 없으면 빈
+        배열로 둬도 돼.
+      - 장소 정보에 영업시간/대표메뉴/가격이 있으면 자연스럽게 문장에 녹여도 좋고, 없으면 성향
+        설명에만 집중해. 없는 정보를 지어내지 마.
+      - 과장하지 말고 담백하게, 20~30대 커플 앱 말투로.
+
+      [사용자 성향]
+      %s
+
+      [장소 정보]
+      %s
+      """;
+
   private final AiChatSessionRepository aiChatSessionRepository;
   private final AiChatMessageRepository aiChatMessageRepository;
   private final AiChatMessageIntentRepository aiChatMessageIntentRepository;
   private final AiChatMessageScoreRepository aiChatMessageScoreRepository;
   private final WeatherService weatherService;
   private final PlaceRepository placeRepository;
+  private final org.ict.datemanagerbackend.domain.place.repository.PlaceRealityRepository placeRealityRepository;
   private final UserStyleRepository userStyleRepository;
   private final org.ict.datemanagerbackend.domain.user.service.UserStyleUpdateService userStyleUpdateService;
   private final ObjectMapper objectMapper;
@@ -771,6 +795,71 @@ public class AiChatServiceImpl implements AiChatService {
         .map(r -> "- " + r)
         .collect(Collectors.joining("\n"));
     return requestChatCompletionText(REPORT_SUMMARY_PROMPT.formatted(reasonText), false).trim();
+  }
+
+  /**
+   * 장소 상세 화면 "AI 코치의 한마디"(2026-08-31). 실패해도 화면이 비면 안 되니(챗봇의 다른 부가
+   * 기능들과 같은 원칙) 담백한 기본 문구로 조용히 대체한다.
+   */
+  @Override
+  public org.ict.datemanagerbackend.domain.aichat.dto.PlaceCoachExplanationDto explainPlace(User user, Long placeId) {
+    Place place = placeRepository.findById(placeId)
+        .orElseThrow(() -> new IllegalArgumentException("장소를 찾을 수 없습니다"));
+    org.ict.datemanagerbackend.domain.user.entity.UserStyle style =
+        userStyleRepository.findById(user.getId()).orElse(null);
+
+    Map<String, Integer> userScores = new LinkedHashMap<>();
+    userScores.put("energy", styleAxisOrDefault(style == null ? null : style.getInitEnergy()));
+    userScores.put("immersion", styleAxisOrDefault(style == null ? null : style.getInitImmersion()));
+    userScores.put("vibe", styleAxisOrDefault(style == null ? null : style.getInitVibe()));
+    userScores.put("aesthetic", styleAxisOrDefault(style == null ? null : style.getInitAesthetic()));
+    userScores.put("depth", styleAxisOrDefault(style == null ? null : style.getInitDepth()));
+
+    org.ict.datemanagerbackend.domain.place.entity.PlaceCategory category = place.getPlaceCategory();
+    Map<String, Integer> placeScores = new LinkedHashMap<>();
+    placeScores.put("energy", placeAxisOrDefault(category == null ? null : category.getScoreEnergy()));
+    placeScores.put("immersion", placeAxisOrDefault(category == null ? null : category.getScoreImmersion()));
+    placeScores.put("vibe", placeAxisOrDefault(category == null ? null : category.getScoreVibe()));
+    placeScores.put("aesthetic", placeAxisOrDefault(category == null ? null : category.getScoreAesthetic()));
+    placeScores.put("depth", placeAxisOrDefault(category == null ? null : category.getScoreDepth()));
+
+    org.ict.datemanagerbackend.domain.place.entity.PlaceReality reality =
+        placeRealityRepository.findByPlace_Id(placeId).orElse(null);
+
+    String userScoreText = userScores.entrySet().stream()
+        .map(e -> e.getKey() + ": " + e.getValue())
+        .collect(Collectors.joining(", "));
+
+    StringBuilder placeInfo = new StringBuilder();
+    placeInfo.append("이름: ").append(place.getName());
+    placeInfo.append(", 카테고리: ").append(category != null ? category.getSubCategory() : place.getCategory());
+    placeInfo.append(", 성향점수(").append(
+        placeScores.entrySet().stream().map(e -> e.getKey() + ": " + e.getValue()).collect(Collectors.joining(", "))
+    ).append(")");
+    if (reality != null) {
+      if (reality.getUseTime() != null) placeInfo.append(", 영업시간: ").append(reality.getUseTime());
+      if (reality.getMenuInfo() != null) placeInfo.append(", 대표메뉴: ").append(reality.getMenuInfo());
+      if (reality.getPriceText() != null) placeInfo.append(", 가격: ").append(reality.getPriceText());
+    }
+
+    try {
+      String content = requestChatCompletionText(
+          PLACE_COACH_EXPLANATION_PROMPT.formatted(userScoreText, placeInfo), true);
+      JsonNode root = objectMapper.readTree(content);
+      String message = root.path("message").asText("");
+      List<String> topAxes = new ArrayList<>();
+      for (JsonNode axis : root.path("topAxes")) {
+        String axisId = axis.asText(null);
+        if (axisId != null && userScores.containsKey(axisId)) topAxes.add(axisId);
+      }
+      if (!message.isBlank()) {
+        return new org.ict.datemanagerbackend.domain.aichat.dto.PlaceCoachExplanationDto(message, topAxes);
+      }
+    } catch (Exception e) {
+      log.warn("AI 코치 장소 설명 생성 실패 (placeId={})", placeId, e);
+    }
+    return new org.ict.datemanagerbackend.domain.aichat.dto.PlaceCoachExplanationDto(
+        "이 장소, 우리 성향이랑 잘 맞을 것 같아 골라봤어.", List.of());
   }
 
   private int styleAxisOrDefault(Double value) {
