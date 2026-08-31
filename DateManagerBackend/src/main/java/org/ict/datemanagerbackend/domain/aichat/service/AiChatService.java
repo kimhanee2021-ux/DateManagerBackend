@@ -28,4 +28,9 @@ public interface AiChatService {
   String summarizeReports(List<String> reasons);
   // <<장소 상세 화면 "AI 코치의 한마디" - 유저 성향과 이 장소가 왜 맞는지 짧게 설명>>
   org.ict.datemanagerbackend.domain.aichat.dto.PlaceCoachExplanationDto explainPlace(User user, Long placeId);
+  // <<AI 스마트 자금 플래너 - 자연어 목표 입력을 금액/기간/카테고리/목적지로 파싱. 모호하면
+  //   needsClarification=true + 되물을 질문 반환>>
+  org.ict.datemanagerbackend.domain.aichat.dto.FundGoalParseDto parseFundGoal(String userText);
+  // <<AI 스마트 자금 플래너 - 목표 현황을 보고 짧은 브리핑 코멘트 한 줄 생성>>
+  String generateFundGoalComment(String title, long targetAmount, long currentAmount, int targetPeriodMonth);
 }

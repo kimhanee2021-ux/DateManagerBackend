@@ -868,6 +868,85 @@ public class AiChatServiceImpl implements AiChatService {
         "이 장소, 우리 성향이랑 잘 맞을 것 같아 골라봤어.", List.of());
   }
 
+  private static final String FUND_GOAL_PARSE_PROMPT = """
+      사용자가 "AI 스마트 자금 플래너"에 자연어로 자금 목표를 입력했어. 아래 문장에서 금액(원),
+      기간(개월), 목적, 여행지(있으면)를 뽑아서 JSON으로만 답해.
+
+      규칙:
+      - amount와 periodMonth 둘 중 하나라도 뽑을 수 없으면 needsClarification을 true로 하고,
+        무엇이 부족한지 짧고 친근하게 되묻는 문장을 question에 담아. 이때 다른 필드는 전부 null.
+      - amount는 "150만원"처럼 만/억 단위 한글 표현도 원 단위 숫자로 환산해서 정수로.
+      - periodMonth는 "6개월"→6, "1년"→12처럼 개월 수 정수로.
+      - category는 "여행"/"기념일"/"결혼"/"기타" 중 문맥에 맞는 하나로. 명확히 안 드러나면 "기타".
+      - destinationCountry는 여행지 지명(도시/국가 원문, 예: "도쿄")을 그대로 - 여행 목적이 아니거나
+        지명이 없으면 null.
+      - title은 "도쿄 여행 자금"처럼 12자 이내 짧은 제목으로 새로 지어.
+
+      JSON 형식: {"needsClarification": boolean, "question": string|null, "title": string|null,
+      "amount": number|null, "periodMonth": number|null, "category": string|null,
+      "destinationCountry": string|null}
+
+      사용자 입력: "%s"
+      """;
+
+  /**
+   * AI 스마트 자금 플래너 - 자연어 목표 파싱(2026-08-31). 파싱 자체가 실패하면(네트워크/모델 오류)
+   * "다시 말씀해달라"는 재질문으로 폴백한다 - 다른 AI 부가기능과 달리 이건 사용자 입력을 그대로
+   * 반영해야 하는 기능이라 그럴듯한 기본값으로 대체할 수 없기 때문.
+   */
+  @Override
+  public org.ict.datemanagerbackend.domain.aichat.dto.FundGoalParseDto parseFundGoal(String userText) {
+    try {
+      String content = requestChatCompletionText(FUND_GOAL_PARSE_PROMPT.formatted(userText), true);
+      JsonNode root = objectMapper.readTree(content);
+      boolean needsClarification = root.path("needsClarification").asBoolean(false);
+      if (needsClarification || !root.path("amount").isNumber() || !root.path("periodMonth").isNumber()) {
+        String question = root.path("question").asText(null);
+        if (question == null || question.isBlank()) {
+          question = "목표 금액과 기간을 조금 더 구체적으로 말해줄래?";
+        }
+        return new org.ict.datemanagerbackend.domain.aichat.dto.FundGoalParseDto(
+            true, question, null, null, null, null, null);
+      }
+      String title = root.path("title").asText(null);
+      if (title == null || title.isBlank()) title = "우리의 자금 목표";
+      String category = root.path("category").asText(null);
+      if (category == null || category.isBlank()) category = "기타";
+      String destination = root.path("destinationCountry").asText(null);
+      if (destination != null && destination.isBlank()) destination = null;
+      return new org.ict.datemanagerbackend.domain.aichat.dto.FundGoalParseDto(
+          false, null, title, root.path("amount").asLong(), root.path("periodMonth").asInt(),
+          category, destination);
+    } catch (Exception e) {
+      log.warn("AI 자금 목표 파싱 실패", e);
+      return new org.ict.datemanagerbackend.domain.aichat.dto.FundGoalParseDto(
+          true, "목표 설정 중에 문제가 생겼어. 조금 더 구체적으로(예: \"6개월 안에 150만원\") 다시 말해줄래?",
+          null, null, null, null, null);
+    }
+  }
+
+  private static final String FUND_GOAL_COMMENT_PROMPT = """
+      커플 또는 개인이 아래 자금 목표를 모으고 있어. 진행 상황을 응원하는 짧은 코멘트 한 문장
+      (30자 이내, 이모지 없이)을 만들어줘. 설명 없이 문장 하나만 출력해.
+
+      목표: %s, 목표금액: %,d원, 현재모은금액: %,d원, 목표기간: %d개월
+      """;
+
+  /** AI 스마트 자금 플래너 대시보드 브리핑 코멘트 - 하루 1회만 재생성하는 캐싱은 호출부(FinancialPlannerServiceImpl)에서 처리. */
+  @Override
+  public String generateFundGoalComment(String title, long targetAmount, long currentAmount, int targetPeriodMonth) {
+    try {
+      String content = requestChatCompletionText(
+          FUND_GOAL_COMMENT_PROMPT.formatted(title, targetAmount, currentAmount, targetPeriodMonth), false);
+      if (content == null || content.isBlank()) throw new IllegalStateException("empty");
+      return content.trim().replaceAll("^[\"']|[\"']$", "");
+    } catch (Exception e) {
+      log.warn("AI 자금 목표 코멘트 생성 실패", e);
+      long percent = targetAmount > 0 ? Math.min(100, currentAmount * 100 / targetAmount) : 0;
+      return "지금까지 " + percent + "% 모았어요, 조금씩 잘 가고 있어요.";
+    }
+  }
+
   private int styleAxisOrDefault(Double value) {
     return value != null ? (int) Math.round(value) : 50;
   }
