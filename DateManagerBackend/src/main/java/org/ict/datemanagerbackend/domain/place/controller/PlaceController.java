@@ -485,7 +485,13 @@ public class PlaceController {
         log.warn("장소 열람 기반 성향값 갱신 실패 (placeId={})", id, e);
       }
     }
-    return ResponseEntity.ok(PlaceResponseDto.from(placeOpt.get(), style));
+    // 영업시간/휴무일/주차/편의태그(2026-08-31) - 장소 상세 화면 완성도 개선. TourAPI 상세조회로만
+    // 채워지는 선택적 데이터라 없으면 null/빈 리스트로 조용히 빠진다.
+    PlaceReality reality = placeRealityRepository.findByPlace_Id(id).orElse(null);
+    List<String> amenityTags = placeAmenityRepository.findByPlace_Id(id).stream()
+        .map(PlaceAmenity::getAmenityTag)
+        .toList();
+    return ResponseEntity.ok(PlaceResponseDto.from(placeOpt.get(), style, null, reality, amenityTags));
   }
 
   // "성남아트센터"/"국립현대미술관 서울관"이라는 장소 자체가 아니라 거기서 하는 다른 공연·전시를
