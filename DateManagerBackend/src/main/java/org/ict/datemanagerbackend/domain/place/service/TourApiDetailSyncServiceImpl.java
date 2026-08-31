@@ -59,29 +59,34 @@ public class TourApiDetailSyncServiceImpl implements TourApiDetailSyncService {
   );
 
   private record FieldMap(String useTime, String restDate, String fee, String parking,
-                           String chkBaby, String chkPet, String chkCard, String menu) {
+                           String chkBaby, String chkPet, String chkCard, String menu,
+                           String phone, String packing) {
     FieldMap(String useTime, String restDate, String fee, String parking,
-             String chkBaby, String chkPet, String chkCard) {
-      this(useTime, restDate, fee, parking, chkBaby, chkPet, chkCard, null);
+             String chkBaby, String chkPet, String chkCard, String menu, String phone) {
+      this(useTime, restDate, fee, parking, chkBaby, chkPet, chkCard, menu, phone, null);
     }
   }
 
   // 콘텐츠타입별 detailIntro2 필드명 매핑. 2026-08-31에 전 콘텐츠타입(12/28/32/38/39) 실제 호출로
   // 검증함 - 관광지(12)/숙박(32)/맛집(39)은 응답에 요금 관련 필드가 아예 없어서 fee가 null인 게
   // 정상(코드 누락이 아니라 TourAPI 자체의 데이터 한계). 숙박은 룸타입별로 가격이 갈려서 원래
-  // 단일 가격 필드를 안 준다.
+  // 단일 가격 필드를 안 준다. infocenter*(전화번호)는 5개 콘텐츠타입 전부에 존재함(범용 필드).
   private static final Map<String, FieldMap> FIELD_MAP_BY_CONTENT_TYPE = Map.of(
-      "12", new FieldMap("usetime", "restdate", null, "parking", "chkbabycarriage", "chkpet", "chkcreditcard"),
+      "12", new FieldMap("usetime", "restdate", null, "parking", "chkbabycarriage", "chkpet", "chkcreditcard",
+          null, "infocenter"),
       "14", new FieldMap("usetimeculture", "restdateculture", "usefee", "parkingculture",
-          "chkbabycarriageculture", "chkpetculture", "chkcreditcardculture"),
+          "chkbabycarriageculture", "chkpetculture", "chkcreditcardculture", null, "infocenterculture"),
       "28", new FieldMap("usetimeleports", "restdateleports", "usefeeleports", "parkingleports",
-          "chkbabycarriageleports", "chkpetleports", "chkcreditcardleports"),
-      "32", new FieldMap("checkintime", null, null, "parkinglodging", null, "chkpetlodging", null),
+          "chkbabycarriageleports", "chkpetleports", "chkcreditcardleports", null, "infocenterleports"),
+      "32", new FieldMap("checkintime", null, null, "parkinglodging", null, "chkpetlodging", null,
+          null, "infocenterlodging"),
       // saleitemcost(2026-08-31 추가) - 실제 응답 검증 완료(값이 비어있는 경우도 많지만 필드 자체는 존재).
-      "38", new FieldMap("opentime", "restdateshopping", "saleitemcost", "parkingshopping", null, null, "chkcreditcardshopping"),
+      "38", new FieldMap("opentime", "restdateshopping", "saleitemcost", "parkingshopping", null, null,
+          "chkcreditcardshopping", null, "infocentershopping"),
       // firstmenu(2026-08-31 추가) - 대표메뉴. treatmenu(취급메뉴 목록)도 응답에 있지만 카드에 노출할
-      // 짧은 한 줄이면 충분해서 firstmenu만 저장한다.
-      "39", new FieldMap("opentimefood", "restdatefood", null, "parkingfood", null, null, "chkcreditcardfood", "firstmenu")
+      // 짧은 한 줄이면 충분해서 firstmenu만 저장한다. packing(포장 가능 여부)은 맛집 전용 필드.
+      "39", new FieldMap("opentimefood", "restdatefood", null, "parkingfood", null, null, "chkcreditcardfood",
+          "firstmenu", "infocenterfood", "packing")
   );
 
   private final PlaceRepository placeRepository;
@@ -189,14 +194,19 @@ public class TourApiDetailSyncServiceImpl implements TourApiDetailSyncService {
     String fee = textOrNull(item, fields.fee());
     String parking = textOrNull(item, fields.parking());
     String menu = textOrNull(item, fields.menu());
+    String phone = textOrNull(item, fields.phone());
+    String packing = textOrNull(item, fields.packing());
 
-    boolean hasAny = useTime != null || restDate != null || fee != null || parking != null || menu != null;
+    boolean hasAny = useTime != null || restDate != null || fee != null || parking != null || menu != null
+        || phone != null || packing != null;
     if (hasAny) {
       PlaceReality reality = placeRealityRepository.findByPlace_Id(place.getId())
           .orElseGet(() -> PlaceReality.builder().place(place).build());
       if (useTime != null) reality.setUseTime(useTime);
       if (restDate != null) reality.setRestDate(restDate);
       if (fee != null) reality.setPriceText(truncate(fee, 50));
+      if (phone != null) reality.setPhone(truncate(phone, 50));
+      if (packing != null) reality.setPackingInfo(truncate(packing, 20));
       if (parking != null) reality.setParkingInfo(truncate(parking, 100));
       if (menu != null) reality.setMenuInfo(truncate(menu, 300));
       placeRealityRepository.save(reality);

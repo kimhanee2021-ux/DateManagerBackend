@@ -80,6 +80,18 @@ public class PlaceReality {
   @Column(name = "menu_info", length = 300)
   private String menuInfo;
 
+  // 전화번호(2026-08-31 추가) - TourAPI detailIntro2의 infocenter* 필드. 12/14/28/32/38/39 전
+  // 콘텐츠타입에 다 존재함(실측 검증) - "현실 체킹" 섹션을 채우는 범용 필드라 별도 콘텐츠타입 제한 없음.
+  @Setter
+  @Column(name = "phone", length = 50)
+  private String phone;
+
+  // 포장 가능 여부(2026-08-31 추가) - TourAPI의 packing(맛집 전용, contentTypeId=39). 자유 텍스트라
+  // "가능"/"불가"/공백 등이 그대로 들어온다.
+  @Setter
+  @Column(name = "packing_info", length = 20)
+  private String packingInfo;
+
   @Builder.Default
   @Column(name = "updated_at", nullable = false, updatable = false)
   private LocalDateTime updatedAt = LocalDateTime.now(); // 수정 일시

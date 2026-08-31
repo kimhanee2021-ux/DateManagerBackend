@@ -50,7 +50,9 @@ public record PlaceResponseDto(
     String restDate,
     String parkingInfo,
     List<String> amenityTags,
-    String menuInfo
+    String menuInfo,
+    String phone,
+    String packingInfo
 ) {
 
   public static PlaceResponseDto from(Place place, PlaceStyle style) {
@@ -104,7 +106,9 @@ public record PlaceResponseDto(
         reality != null ? reality.getRestDate() : null,
         reality != null ? reality.getParkingInfo() : null,
         amenityTags != null ? amenityTags : List.of(),
-        reality != null ? reality.getMenuInfo() : null
+        reality != null ? reality.getMenuInfo() : null,
+        reality != null ? reality.getPhone() : null,
+        reality != null ? reality.getPackingInfo() : null
     );
   }
 }

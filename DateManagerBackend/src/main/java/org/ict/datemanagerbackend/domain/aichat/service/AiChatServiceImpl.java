@@ -845,6 +845,7 @@ public class AiChatServiceImpl implements AiChatService {
       if (reality.getUseTime() != null) placeInfo.append(", 영업시간: ").append(reality.getUseTime());
       if (reality.getMenuInfo() != null) placeInfo.append(", 대표메뉴: ").append(reality.getMenuInfo());
       if (reality.getPriceText() != null) placeInfo.append(", 가격: ").append(reality.getPriceText());
+      if (reality.getPackingInfo() != null) placeInfo.append(", 포장: ").append(reality.getPackingInfo());
     }
 
     try {
