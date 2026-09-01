@@ -25,6 +25,7 @@ public record CurationPlaceDto(
     String emoji,
     String address,
     String imageUrl,
+    Boolean imagePlaceholder,
     String priceText,
     String waitingStatus,
     Integer waitingTeams,
@@ -51,6 +52,10 @@ public record CurationPlaceDto(
       PerformanceRanking ranking,
       PlaceStyle style
   ) {
+    // 실제 사진(place.imageUrl)이 없을 때만 세부분류 대표이미지로 대체 - 사칭 방지를 위해 프론트가
+    // "실사진 준비중" 배지를 같이 띄울 수 있도록 imagePlaceholder로 대체 여부를 함께 내려준다.
+    boolean usePlaceholder = PlaceRepresentativeImageResolver.isPlaceholder(place, category);
+    String resolvedImageUrl = PlaceRepresentativeImageResolver.resolve(place, category);
     return new CurationPlaceDto(
         place.getId(),
         place.getName(),
@@ -58,7 +63,8 @@ public record CurationPlaceDto(
         category != null ? category.getSubCategory() : null,
         category != null ? category.getEmoji() : null,
         place.getAddress(),
-        place.getImageUrl(),
+        resolvedImageUrl,
+        usePlaceholder,
         reality != null ? reality.getPriceText() : null,
         reality != null ? reality.getWaitingStatus() : null,
         reality != null ? reality.getWaitingTeams() : null,

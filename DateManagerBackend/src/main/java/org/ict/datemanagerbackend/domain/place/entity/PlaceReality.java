@@ -64,6 +64,34 @@ public class PlaceReality {
   @Column(name = "parking_info", length = 100)
   private String parkingInfo; // 주차 정보
 
+  // TourAPI detailIntro2로 채워지는 필드(2026-08-26 추가) - 콘텐츠타입마다 실제 필드명이 다르지만
+  // (예: 문화시설 usetimeculture, 음식점 opentimefood) 우리 쪽에선 의미가 같아서 이 두 컬럼으로 통일한다.
+  @Setter
+  @Column(name = "use_time", length = 300)
+  private String useTime; // 이용시간/영업시간 안내 원문
+
+  @Setter
+  @Column(name = "rest_date", length = 200)
+  private String restDate; // 휴무일 안내 원문
+
+  // 대표메뉴(2026-08-31 추가) - TourAPI detailIntro2의 firstmenu(맛집 전용, contentTypeId=39).
+  // 다른 콘텐츠타입엔 이 필드 자체가 없어서 항상 null.
+  @Setter
+  @Column(name = "menu_info", length = 300)
+  private String menuInfo;
+
+  // 전화번호(2026-08-31 추가) - TourAPI detailIntro2의 infocenter* 필드. 12/14/28/32/38/39 전
+  // 콘텐츠타입에 다 존재함(실측 검증) - "현실 체킹" 섹션을 채우는 범용 필드라 별도 콘텐츠타입 제한 없음.
+  @Setter
+  @Column(name = "phone", length = 50)
+  private String phone;
+
+  // 포장 가능 여부(2026-08-31 추가) - TourAPI의 packing(맛집 전용, contentTypeId=39). 자유 텍스트라
+  // "가능"/"불가"/공백 등이 그대로 들어온다.
+  @Setter
+  @Column(name = "packing_info", length = 20)
+  private String packingInfo;
+
   @Builder.Default
   @Column(name = "updated_at", nullable = false, updatable = false)
   private LocalDateTime updatedAt = LocalDateTime.now(); // 수정 일시

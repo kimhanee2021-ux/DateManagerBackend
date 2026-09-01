@@ -12,6 +12,8 @@ public interface AdminPlaceService {
   Map<String, Integer> cleanupBlacklistedPlaces();
   // <<dedup 반경 확대 이전에 저장된, 이름 같고 가까운 거리의 중복 장소 정리>>
   Map<String, Integer> mergeDuplicatePlaces();
+  // <<사진 있는 TourAPI 숙박 항목 기준으로, 표기 차이 때문에 dedup에서 못 걸러낸 CSV 숙박(LODGING_STD)에 사진만 채워줌>>
+  Map<String, Integer> backfillLodgingImagesFromTourApi();
   // <<대분류별 장소 개수 + 전체 개수>>
   Map<String, Long> getSyncStatus();
   // <<전체 장소 백업(CSV 본문)>>
@@ -27,9 +29,13 @@ public interface AdminPlaceService {
   // <<TourAPI 출처 장소 좌표를 카카오와 대조해 재검증/교정 - 수십 분 이상 걸려서 백그라운드로 돌리고 바로 반환>>
   Map<String, String> verifyTourApiCoordinates();
   // <<이름 키워드로 못 잡은 미분류 장소를 네이버 지역 검색 API의 실제 category 태그로 재분류(최대 limit건)>>
-  Map<String, Integer> matchPlaceCategoriesViaNaver(int limit);
+  Map<String, Object> matchPlaceCategoriesViaNaver(int limit);
+  // <<네이버로도 못 잡은 미분류 장소를 소상공인시장진흥공단 상가정보 API(반경검색)로 재분류>>
+  Map<String, Object> matchPlaceCategoriesViaSbiz(int limit);
   // <<장소↔세부분류 연결 백업(CSV 본문) - (externalSource,externalId)+parentCategory/subCategory 기준>>
   String exportPlaceCategoryLinksCsv();
   // <<exportPlaceCategoryLinksCsv로 받은 CSV를 내 DB에 그대로 반영(매칭 로직 재실행 불필요)>>
   Map<String, Integer> importPlaceCategoryLinksCsv(String csv);
+  // <<TourAPI 상세정보(운영시간/휴무일/입장료/주차/편의시설/사진갤러리) 동기화(최대 limit건) - 백그라운드로 돌리고 바로 반환>>
+  Map<String, String> syncTourApiDetails(int limit);
 }

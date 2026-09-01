@@ -5,6 +5,7 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
@@ -21,6 +22,22 @@ public interface PlaceRepository extends JpaRepository<Place, Long> {
 
   // 큐레이션/코스빌더에서 카테고리(맛집, 숙박 등)별로 장소를 페이지 단위 조회할 때 사용.
   Page<Place> findByCategory(String category, Pageable pageable);
+
+  // "같은 공연장(venueId)에서 하는 다른 공연들" 조회용(2026-08-27) - "장소(공연장) 자체가 아니라
+  // 거기서 하는 공연이 중요하다"는 제품 방향에 따라 추가. 지금 보고 있는 공연 자신은 제외하고,
+  // 공연 시작일이 빠른 순으로 보여준다.
+  List<Place> findByVenueIdAndIdNotOrderByStartDateAsc(String venueId, Long id);
+
+  // 같은 그룹핑을 venueId가 없는 소스(문화정보 전시 등, 2026-08-27)에도 적용 - KOPIS의 mt10id 같은
+  // 깔끔한 시설 ID가 없어서, 장소명(venueName) 완전일치로 대신 그룹핑한다("국립현대미술관 서울관"의
+  // 다른 전시 찾기 등). 표기 차이는 대상으로 삼지 않아 오탐 위험이 적다.
+  List<Place> findByVenueNameAndIdNotOrderByStartDateAsc(String venueName, Long id);
+
+  // "AI 코스 추천" 반경 필터용(2026-08-25 추가) - 사각형(위경도 범위)으로 1차로 넉넉히 추린 뒤,
+  // 서비스 레이어에서 haversine으로 정확한 원형 반경만 다시 거른다. (latitude, longitude) 복합
+  // 인덱스(idx_places_lat_lng)가 이미 있어서 이 조건으로도 빠르다.
+  List<Place> findByLatitudeBetweenAndLongitudeBetween(
+      Double minLat, Double maxLat, Double minLon, Double maxLon, Pageable pageable);
 
   // 큐레이션 탭(데이트/숙박) 조회용 - 카테고리/세부분류/지역/이름검색을 전부 선택적으로 조합한다.
   // 카테고리가 있을 때(있어야만 하는) 버전과 없을 때 버전 2개로 나눴다 - "category IN :list"에
@@ -70,7 +87,15 @@ public interface PlaceRepository extends JpaRepository<Place, Long> {
   // 실제로 발견함). startDate가 없는 장소(대부분의 카테고리)는 전부 null이라 서로 순위가 안 갈리고
   // 뒤의 정렬 기준으로 넘어가므로, 날짜가 있는 카테고리에만 자연스럽게 효과가 있다(오라클은 ASC에서
   // NULL을 가장 뒤로 보내는 게 기본 동작이라 별도 NULLS LAST 지정이 필요 없음).
-  @Query("SELECT p FROM Place p LEFT JOIN p.placeCategory pc WHERE p.category IN :categories "
+  // sortByRank(2026-08-27, "공연 랭킹으로 필터링" 기능): KOPIS 박스오피스 순위(PerformanceRanking,
+  // rank_no)가 있는 공연을 앞으로 보낸다. Place가 PerformanceRanking을 직접 참조하지 않아서(N:1의
+  // N쪽 - 매일 순위표가 통째로 갈아끼워지는 구조라 반대 방향 연관관계를 안 만듦) JPA 2.1 "LEFT JOIN
+  // ... ON" 문법으로 서로 다른 루트를 직접 조인한다. false일 때는 CASE가 전부 0을 줘서(다른 정렬
+  // 기준들과 동일한 패턴) 기존 동작에 영향이 없고, true일 때만 순위 오름차순(순위 없는 곳은
+  // COALESCE로 맨 뒤로) 정렬이 맨 앞 기준으로 붙는다.
+  @Query("SELECT p FROM Place p LEFT JOIN p.placeCategory pc "
+      + "LEFT JOIN PerformanceRanking pr ON pr.place = p "
+      + "WHERE p.category IN :categories "
       + "AND (:subCategory IS NULL OR pc.subCategory = :subCategory) AND "
       + "(p.address LIKE CONCAT('%', :r1, '%') "
       + "OR (:r2 IS NOT NULL AND p.address LIKE CONCAT('%', :r2, '%')) "
@@ -79,17 +104,20 @@ public interface PlaceRepository extends JpaRepository<Place, Long> {
       + "AND (:keyword IS NULL OR p.name LIKE CONCAT('%', :keyword, '%')) "
       + "AND (:excludeOutdoor = false OR COALESCE(pc.isIndoor, CASE WHEN p.category IN ('관광지', '축제') THEN 0 ELSE 1 END) = 1) "
       + "ORDER BY "
+      + "CASE WHEN :sortByRank = false THEN 0 ELSE COALESCE(pr.rankNo, 999999) END ASC, "
       + "CASE WHEN :indoorBoost = false THEN 0 ELSE (1 - COALESCE(pc.isIndoor, CASE WHEN p.category IN ('관광지', '축제') THEN 0 ELSE 1 END)) END ASC, "
       + "p.startDate ASC, "
       + "CASE WHEN :energyTarget IS NULL THEN 0 "
       + "ELSE ABS(COALESCE(pc.scoreEnergy, 50) - :energyTarget) END ASC")
   Page<Place> searchByCategoryIn(
       List<String> categories, String subCategory, String r1, String r2, String r3, String district,
-      String keyword, boolean excludeOutdoor, boolean indoorBoost, Integer energyTarget, Pageable pageable);
+      String keyword, boolean excludeOutdoor, boolean indoorBoost, Integer energyTarget, boolean sortByRank,
+      Pageable pageable);
 
   // 카테고리 칩을 아예 안 고른(=전체) 경우. 위 searchByCategoryIn과 지역/구시/키워드/날씨/에너지게이지
   // 조건은 동일하다.
-  @Query("SELECT p FROM Place p LEFT JOIN p.placeCategory pc WHERE "
+  @Query("SELECT p FROM Place p LEFT JOIN p.placeCategory pc "
+      + "LEFT JOIN PerformanceRanking pr ON pr.place = p WHERE "
       + "(p.address LIKE CONCAT('%', :r1, '%') "
       + "OR (:r2 IS NOT NULL AND p.address LIKE CONCAT('%', :r2, '%')) "
       + "OR (:r3 IS NOT NULL AND p.address LIKE CONCAT('%', :r3, '%'))) "
@@ -97,32 +125,40 @@ public interface PlaceRepository extends JpaRepository<Place, Long> {
       + "AND (:keyword IS NULL OR p.name LIKE CONCAT('%', :keyword, '%')) "
       + "AND (:excludeOutdoor = false OR COALESCE(pc.isIndoor, CASE WHEN p.category IN ('관광지', '축제') THEN 0 ELSE 1 END) = 1) "
       + "ORDER BY "
+      + "CASE WHEN :sortByRank = false THEN 0 ELSE COALESCE(pr.rankNo, 999999) END ASC, "
       + "CASE WHEN :indoorBoost = false THEN 0 ELSE (1 - COALESCE(pc.isIndoor, CASE WHEN p.category IN ('관광지', '축제') THEN 0 ELSE 1 END)) END ASC, "
       + "p.startDate ASC, "
       + "CASE WHEN :energyTarget IS NULL THEN 0 "
       + "ELSE ABS(COALESCE(pc.scoreEnergy, 50) - :energyTarget) END ASC")
   Page<Place> searchAll(
       String r1, String r2, String r3, String district, String keyword,
-      boolean excludeOutdoor, boolean indoorBoost, Integer energyTarget, Pageable pageable);
+      boolean excludeOutdoor, boolean indoorBoost, Integer energyTarget, boolean sortByRank, Pageable pageable);
 
   // 숙박 탭 카테고리 칩에 "OO곳" 개수를 보여주기 위한 대분류 안 세부분류별 집계.
   // 세부분류가 아직 안 붙은(placeCategory가 null인) 장소는 이 결과에 안 잡힌다.
+  // categories가 List인 이유: 큐레이션 칩 하나가 실제 Place.category 값 여러 개를 가리키는 경우가
+  // 있다(searchByCategoryIn과 같은 이유) - "공연" 칩은 장르명(서양음악(클래식) 등) 10개로, "전시" 칩은
+  // "문화시설"로, "박물관·미술관" 칩은 "박물관/미술관"(슬래시, 시더의 parent_category "박물관·미술관"과는
+  // 다른 값)으로 실제 저장돼 있다. 예전엔 단일 String으로 받아 칩의 id를 그대로 넘겼는데, id와 실제
+  // Place.category 값이 다른 칩(전시/공연/박물관·미술관)에서 세부칩 개수가 전부 0으로 나오는 버그가
+  // 있었다(2026-08-28 사용자가 큐레이션 탭에서 실제로 발견 - 칩을 눌러 들어가면 결과는 나오는데
+  // 칩에 찍힌 개수만 0인 상태).
   @Query("SELECT p.placeCategory.subCategory, COUNT(p) FROM Place p "
-      + "WHERE p.category = :category AND p.placeCategory IS NOT NULL "
+      + "WHERE p.category IN :categories AND p.placeCategory IS NOT NULL "
       + "GROUP BY p.placeCategory.subCategory")
-  List<Object[]> countGroupedBySubCategory(String category);
+  List<Object[]> countGroupedBySubCategory(List<String> categories);
 
   // 위와 같은 집계인데 지역까지 같이 좁힐 때 쓴다(2026-08-19, category-counts와 같은 이유).
   // r1/r2/r3/district는 위 searchByCategoryIn과 같은 이유(지역 통합 + 구시 중복이름 대응).
   @Query("SELECT p.placeCategory.subCategory, COUNT(p) FROM Place p "
-      + "WHERE p.category = :category AND p.placeCategory IS NOT NULL "
+      + "WHERE p.category IN :categories AND p.placeCategory IS NOT NULL "
       + "AND (p.address LIKE CONCAT('%', :r1, '%') "
       + "OR (:r2 IS NOT NULL AND p.address LIKE CONCAT('%', :r2, '%')) "
       + "OR (:r3 IS NOT NULL AND p.address LIKE CONCAT('%', :r3, '%'))) "
       + "AND (:district IS NULL OR p.address LIKE CONCAT('%', :district, '%')) "
       + "GROUP BY p.placeCategory.subCategory")
   List<Object[]> countGroupedBySubCategoryAndAddressContaining(
-      String category, String r1, String r2, String r3, String district);
+      List<String> categories, String r1, String r2, String r3, String district);
 
   // 홈탭 "내 주변"에서 스포츠처럼 희소한 카테고리용(2026-08-20) - findNearestPlaces(좌표 최근접 N개
   // 풀링 후 카테고리로 거르는 방식)은 전국에 몇십~몇백 곳뿐인 카테고리엔 안 맞는다. 흔한 카테고리
@@ -135,11 +171,17 @@ public interface PlaceRepository extends JpaRepository<Place, Long> {
   // (사용자가 실제로 이 문제를 지적함). null이면(스포츠처럼 세부분류 구분이 필요 없는 카테고리)
   // 대분류만으로 걸러 기존과 동일하게 동작한다 - LEFT JOIN인 이유는 searchByCategoryIn과 같다
   // (세부분류 미연결 장소가 subCategory 조건 없을 때 결과에서 안 빠지게).
+  // startDate >= :today(2026-08-28 추가): 이 필터가 없으면 "곧 열리는 순"이 아니라 "날짜가 이른 순"이
+  // 돼서, 어제 끝난 경기가 정리 배치(하루 1회) 전까지 남아있는 동안 그게 오늘/내일 경기보다 먼저
+  // 나오는 문제가 있었다(스포츠 3연전에서 실측 - 사용자 지적). startDate가 없는 장소(날짜 개념이 없는
+  // 카테고리)까지 이 필터로 걸러지면 안 되니 null 허용.
   @Query("SELECT p FROM Place p LEFT JOIN p.placeCategory pc WHERE p.category = :category "
       + "AND (:subCategory IS NULL OR pc.subCategory = :subCategory) "
       + "AND p.address LIKE CONCAT('%', :addressKeyword, '%') "
+      + "AND (p.startDate IS NULL OR p.startDate >= :today) "
       + "ORDER BY p.startDate ASC")
-  List<Place> findSparseByCategoryAndAddress(String category, String subCategory, String addressKeyword);
+  List<Place> findSparseByCategoryAndAddress(String category, String subCategory, String addressKeyword,
+                                              java.time.LocalDate today);
 
   // 이름에 특정 키워드가 포함된 장소를 찾는다 - 프랜차이즈/체인점 블랙리스트 정리용
   // (TourApiSyncService.cleanupBlacklistedPlaces() 참고).
@@ -147,6 +189,21 @@ public interface PlaceRepository extends JpaRepository<Place, Long> {
 
   // 아직 세부분류(place_category)가 안 붙은 장소만 골라서 자동 연결 배치(PlaceCategoryLinker)가 처리한다.
   List<Place> findByPlaceCategoryIsNull();
+
+  // TourAPI 상세정보(detailIntro2/detailImage2) 동기화 대상 - 개발계정 일일 호출 제한 때문에 매번
+  // limit(Pageable)만큼만 잘라서 가져온다(findByPlaceCategoryIsNull처럼 전체를 메모리로 다 불러온 뒤
+  // 자르는 방식은 4만~8만 건 규모에서 비효율적이라 여기서는 처음부터 페이징 쿼리로 만듦, 2026-08-26).
+  @Query("SELECT p FROM Place p WHERE p.externalSource = 'TOURAPI' AND p.detailSynced IS NULL ORDER BY p.id")
+  List<Place> findTourApiPlacesPendingDetailSync(Pageable pageable);
+
+  // 위 커서를 카테고리별 라운드로빈으로 도는 용도(2026-08-27) - id 순서로만 돌면 id가 낮은 카테고리
+  // (맛집)만 몇 주째 다 채우고 나머지(관광지/숙박 등)는 하나도 못 건드리는 문제가 있었다. 배치마다
+  // "아직 안 끝난 카테고리 목록"과 "카테고리별로 다음 N건"을 따로 조회해 서비스 레이어에서 섞는다.
+  @Query("SELECT DISTINCT p.category FROM Place p WHERE p.externalSource = 'TOURAPI' AND p.detailSynced IS NULL")
+  List<String> findCategoriesPendingTourApiDetailSync();
+
+  @Query("SELECT p FROM Place p WHERE p.externalSource = 'TOURAPI' AND p.detailSynced IS NULL AND p.category = :category ORDER BY p.id")
+  List<Place> findTourApiPlacesPendingDetailSyncByCategory(@Param("category") String category, Pageable pageable);
 
   // 관리자 페이지에서 카테고리별 수집량을 확인할 때 사용. TourAPI/KOPIS/박물관 등 소스마다
   // 카테고리 값이 다양해서(관광지/문화시설/공연/액티비티/쇼핑/맛집/숙박/박물관·미술관 등)

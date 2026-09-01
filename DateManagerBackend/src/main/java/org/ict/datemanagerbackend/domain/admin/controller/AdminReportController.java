@@ -41,6 +41,15 @@ public class AdminReportController {
     return ResponseEntity.ok(adminReportService.listReports(status, pageable));
   }
 
+  // 처리 대기 신고 사유를 AI로 요약(2026-08-25 추가) - 관리자 페이지 신고 목록 상단에 노출.
+  @GetMapping("/summary")
+  public ResponseEntity<?> summarizePendingReports(Authentication authentication) {
+    if (!adminAuthService.isAdmin(authentication)) {
+      return ResponseEntity.status(403).body(Map.of("error", "관리자만 접근할 수 있습니다"));
+    }
+    return ResponseEntity.ok(Map.of("summary", adminReportService.summarizePendingReports()));
+  }
+
   @PutMapping("/{id}")
   public ResponseEntity<?> updateReportStatus(Authentication authentication, @PathVariable Long id,
                                                @RequestBody AdminUpdateReportRequest req) {

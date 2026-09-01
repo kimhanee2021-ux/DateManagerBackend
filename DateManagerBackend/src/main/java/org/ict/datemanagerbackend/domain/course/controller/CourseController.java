@@ -48,6 +48,18 @@ public class CourseController implements CourseApiDocs {
     return ResponseEntity.badRequest().body(Map.of("error", message));
   }
 
+  // 커플 공유 조회(2026-08-25) 이후, 목록에는 파트너가 만든 코스도 보이지만 수정/삭제/순서변경은
+  // 여전히 만든 사람만 가능하다 - 이 체크가 던지는 IllegalStateException을 처리 안 해두면 날것의
+  // 500 스택트레이스가 그대로 나가버려서(실사용 테스트로 발견), 403 + 실제 이유로 바꿔준다.
+  @ExceptionHandler(IllegalStateException.class)
+  public ResponseEntity<Map<String, String>> handleForbidden(IllegalStateException e) {
+    return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("error", e.getMessage()));
+  }
+  @ExceptionHandler(java.util.NoSuchElementException.class)
+  public ResponseEntity<Map<String, String>> handleNotFound(java.util.NoSuchElementException e) {
+    return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("error", e.getMessage()));
+  }
+
 
   //원래라면
   // 빌더 화면이 "내 코스" 목록을 그리는 데 쓰는 조회 API(2026-08-22 추가) - 방금 만든 코스그룹이
@@ -69,6 +81,23 @@ public class CourseController implements CourseApiDocs {
                                               @Valid @RequestBody CourseItemMoveRequest request) {
     Long userId = (Long) authentication.getPrincipal();
     courseService.moveCourseItem(userId, groupId, placeId, request.direction());
+    return ResponseEntity.noContent().build();
+  }
+
+  // 코스 순서 자동 제안(동선 최적화, 2026-08-25 추가) - 빌더 상세보기의 "동선 최적화" 버튼용.
+  @PostMapping("/groups/{groupId}/optimize-order")
+  public ResponseEntity<Void> optimizeOrder(Authentication authentication, @PathVariable Long groupId) {
+    Long userId = (Long) authentication.getPrincipal();
+    courseService.optimizeOrder(userId, groupId);
+    return ResponseEntity.noContent().build();
+  }
+
+  // 등록한 코스 삭제(2026-08-25 추가) - 빌더 화면 상세보기의 삭제 버튼용.
+  @DeleteMapping("/groups/{groupId}")
+  public ResponseEntity<Void> deleteCourseGroup(Authentication authentication,
+                                                 @PathVariable Long groupId) {
+    Long userId = (Long) authentication.getPrincipal();
+    courseService.deleteCourseGroup(userId, groupId);
     return ResponseEntity.noContent().build();
   }
 

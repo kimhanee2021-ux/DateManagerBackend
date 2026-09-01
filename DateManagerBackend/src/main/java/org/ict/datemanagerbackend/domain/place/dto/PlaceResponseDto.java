@@ -3,9 +3,11 @@ package org.ict.datemanagerbackend.domain.place.dto;
 import org.ict.datemanagerbackend.domain.place.entity.PerformanceRanking;
 import org.ict.datemanagerbackend.domain.place.entity.Place;
 import org.ict.datemanagerbackend.domain.place.entity.PlaceCategory;
+import org.ict.datemanagerbackend.domain.place.entity.PlaceReality;
 import org.ict.datemanagerbackend.domain.place.entity.PlaceStyle;
 
 import java.time.LocalDate;
+import java.util.List;
 
 // 큐레이션/코스빌더 화면에 내려주는 장소 응답 DTO
 // style은 아직 이 place의 place_styles 행이 없을 수도 있어서(예: 새로 동기화된 장소) null 허용.
@@ -23,6 +25,7 @@ public record PlaceResponseDto(
     Double latitude,
     Double longitude,
     String imageUrl,
+    Boolean imagePlaceholder,
     Integer scoreEnergy,
     Integer scoreImmersion,
     Integer scoreVibe,
@@ -40,17 +43,39 @@ public record PlaceResponseDto(
     String performanceState,
     Integer boxOfficeRank,
     String genreName,
-    String emoji
+    String emoji,
+    String venueName,
+    String venueId,
+    String venueImageUrl,
+    String useTime,
+    String restDate,
+    String parkingInfo,
+    List<String> amenityTags,
+    String menuInfo,
+    String phone,
+    String packingInfo
 ) {
 
   public static PlaceResponseDto from(Place place, PlaceStyle style) {
-    return from(place, style, null);
+    return from(place, style, null, null, List.of());
   }
 
   // 홈탭 "즉흥·계획" 자리에 공연 예매율 순위를 보여주려면 nearby 응답에도 boxOfficeRank/장르가
   // 필요해서 큐레이션 DTO처럼 PerformanceRanking을 선택적으로 받는 오버로드를 추가함(2026-08-19).
   public static PlaceResponseDto from(Place place, PlaceStyle style, PerformanceRanking ranking) {
+    return from(place, style, ranking, null, List.of());
+  }
+
+  // 장소 상세 화면(GET /api/places/{id})에 영업시간/휴무일/주차/편의태그를 실어주기 위한
+  // 오버로드(2026-08-31) - PlaceReality/PlaceAmenity는 TourAPI 상세조회로만 채워지는 선택적
+  // 데이터라 둘 다 null/빈 리스트를 기본값으로 허용한다.
+  public static PlaceResponseDto from(Place place, PlaceStyle style, PerformanceRanking ranking,
+                                       PlaceReality reality, List<String> amenityTags) {
     PlaceCategory category = place.getPlaceCategory();
+    // 실제 사진(place.imageUrl)이 없을 때만 세부분류 대표이미지로 대체 - 사칭 방지를 위해 프론트가
+    // "실사진 준비중" 배지를 같이 띄울 수 있도록 imagePlaceholder로 대체 여부를 함께 내려준다.
+    boolean usePlaceholder = PlaceRepresentativeImageResolver.isPlaceholder(place, category);
+    String resolvedImageUrl = PlaceRepresentativeImageResolver.resolve(place, category);
     return new PlaceResponseDto(
         place.getId(),
         place.getName(),
@@ -58,7 +83,8 @@ public record PlaceResponseDto(
         place.getAddress(),
         place.getLatitude(),
         place.getLongitude(),
-        place.getImageUrl(),
+        resolvedImageUrl,
+        usePlaceholder,
         category != null ? category.getScoreEnergy() : (style != null ? style.getScoreEnergy() : null),
         category != null ? category.getScoreImmersion() : (style != null ? style.getScoreImmersion() : null),
         category != null ? category.getScoreVibe() : (style != null ? style.getScoreVibe() : null),
@@ -78,7 +104,17 @@ public record PlaceResponseDto(
         ranking != null ? ranking.getGenreName() : null,
         // 이미지 없는 카드의 대체 아이콘용(2026-08-22, HomeTab 카드 개선) - 세부분류 이모지가
         // 있으면 그걸, 없으면 null(프론트가 기본 📍로 폴백).
-        category != null ? category.getEmoji() : null
+        category != null ? category.getEmoji() : null,
+        place.getVenueName(),
+        place.getVenueId(),
+        place.getVenueImageUrl(),
+        reality != null ? reality.getUseTime() : null,
+        reality != null ? reality.getRestDate() : null,
+        reality != null ? reality.getParkingInfo() : null,
+        amenityTags != null ? amenityTags : List.of(),
+        reality != null ? reality.getMenuInfo() : null,
+        reality != null ? reality.getPhone() : null,
+        reality != null ? reality.getPackingInfo() : null
     );
   }
 }

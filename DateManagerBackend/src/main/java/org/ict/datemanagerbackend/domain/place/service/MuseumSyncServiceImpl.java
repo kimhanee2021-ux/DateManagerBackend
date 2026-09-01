@@ -45,6 +45,44 @@ public class MuseumSyncServiceImpl implements MuseumSyncService {
   private static final int PAGE_SIZE = 500;
   private static final int MAX_PAGES = 10; // 500 * 10 = 최대 5000건까지 (현재 전국 1074건 확인됨, 여유있게 설정)
 
+  // 시설명(정확히 일치) -> 대표사진 URL(위키미디어, 2026-08-28). 이 API 자체는 사진 필드가 없어서
+  // 471/473건이 무사진이었다(사용자 지적) - 전체 미사진 시설명을 위키백과에 일괄 조회해 위키 문서가
+  // 있는(=유명한) 곳만 채운다. 지역 소규모 박물관 대부분은 위키 문서가 없어 이 방식으로는 못 채우고
+  // 비워둔다 - SportsSyncServiceImpl의 STADIUM_IMAGES와 같은 접근.
+  private static final java.util.Map<String, String> NAME_IMAGES = java.util.Map.ofEntries(
+      java.util.Map.entry("강릉원주대학교박물관", "https://upload.wikimedia.org/wikipedia/commons/7/7a/%EA%B5%AD%EB%A6%BD%EA%B0%95%EB%A6%89%EC%9B%90%EC%A3%BC%EB%8C%80%ED%95%99%EA%B5%901.jpg"),
+      java.util.Map.entry("경주솔거미술관", "https://upload.wikimedia.org/wikipedia/commons/f/f6/Solgeo_Art_Museum%2C_Gyeongju_on_December_25th%2C_2018.jpg"),
+      java.util.Map.entry("국립민속박물관", "https://upload.wikimedia.org/wikipedia/commons/d/da/Korea-Seoul-National.folk.museum-01.JPG"),
+      java.util.Map.entry("국회박물관", "https://upload.wikimedia.org/wikipedia/commons/c/c7/%EA%B5%AD%ED%9A%8C%EB%B0%95%EB%AC%BC%EA%B4%80.jpg"),
+      java.util.Map.entry("기당미술관", "https://upload.wikimedia.org/wikipedia/commons/f/fe/%EA%B8%B0%EB%8B%B9%EB%AF%B8%EC%88%A0%EA%B4%80_240727.jpg"),
+      java.util.Map.entry("디자인코리아뮤지엄", "https://upload.wikimedia.org/wikipedia/commons/b/b6/Design_Korea_Museum_%28South_Korea%29.jpg"),
+      java.util.Map.entry("말박물관", "https://upload.wikimedia.org/wikipedia/ko/0/00/%EB%A7%88%EC%82%AC%EB%B0%95%EB%AC%BC%EA%B4%80_%EC%A0%84%EA%B2%BD.JPG"),
+      java.util.Map.entry("문경석탄박물관", "https://upload.wikimedia.org/wikipedia/commons/c/c5/MG-MGCM-En.jpg"),
+      java.util.Map.entry("쇳대박물관", "https://upload.wikimedia.org/wikipedia/commons/2/22/Lock_Museum.jpg"),
+      java.util.Map.entry("수도국산달동네박물관", "https://upload.wikimedia.org/wikipedia/ko/e/e5/%EC%88%98%EB%8F%84%EA%B5%AD%EC%82%B0%EB%B0%95%EB%AC%BC%EA%B4%80.jpg"),
+      java.util.Map.entry("애니메이션박물관", "https://upload.wikimedia.org/wikipedia/commons/3/3d/Animation_Museum_of_South_Korea_02.jpg"),
+      java.util.Map.entry("양구군립박수근미술관", "https://upload.wikimedia.org/wikipedia/commons/c/c9/%EB%B0%95%EC%88%98%EA%B7%BC%EB%AF%B8%EC%88%A0%EA%B4%80-tourgo.jpg"),
+      java.util.Map.entry("에코랜드", "https://upload.wikimedia.org/wikipedia/commons/a/a2/%EC%A0%9C%EC%A3%BC%EB%8F%84_%EC%97%90%EC%BD%94%EB%9E%9C%EB%93%9C.jpeg"),
+      java.util.Map.entry("오죽헌시립박물관", "https://upload.wikimedia.org/wikipedia/commons/1/16/%EA%B0%95%EB%A6%89%EC%8B%9C%EB%A6%BD%EB%B0%95%EB%AC%BC%EA%B4%80.jpg"),
+      java.util.Map.entry("원주역사박물관", "https://upload.wikimedia.org/wikipedia/commons/0/0e/Wonju_Museum_of_History.jpg"),
+      java.util.Map.entry("의병박물관", "https://upload.wikimedia.org/wikipedia/ko/7/7e/%EC%9D%98%EB%B3%91%EB%B0%95%EB%AC%BC%EA%B4%80.jpg"),
+      java.util.Map.entry("전북특별자치도립미술관", "https://upload.wikimedia.org/wikipedia/commons/b/b5/Jeonbuk_Museum_of_Art%2C_in_Wanju%2C_North_Jeolla_Province%2C_South_Korea_07.jpg"),
+      java.util.Map.entry("전라남도농업박물관", "https://upload.wikimedia.org/wikipedia/commons/b/b0/%EC%A0%84%EB%9D%BC%EB%82%A8%EB%8F%84%EB%86%8D%EC%97%85%EB%B0%95%EB%AC%BC%EA%B4%80.jpg"),
+      java.util.Map.entry("조선대학교미술관", "https://upload.wikimedia.org/wikipedia/ko/7/72/Chosun_University_College_of_Art.jpg"),
+      java.util.Map.entry("부산시립박물관", "https://upload.wikimedia.org/wikipedia/commons/a/af/Busan_museum.JPG"),
+      java.util.Map.entry("삼척시립박물관", "https://upload.wikimedia.org/wikipedia/commons/8/82/Samcheok_Municipal_Museum.jpg"),
+      java.util.Map.entry("삼성미술관 Leeum", "https://upload.wikimedia.org/wikipedia/commons/c/c4/Leeum%2C_Samsung_Museum_of_Art.jpg"),
+      java.util.Map.entry("서울역사박물관", "https://upload.wikimedia.org/wikipedia/commons/e/ed/%EC%84%9C%EC%9A%B8%EC%97%AD%EC%82%AC%EB%B0%95%EB%AC%BC%EA%B4%80_%EB%A1%9C%EA%B3%A0.jpg"),
+      java.util.Map.entry("철새박물관", "https://upload.wikimedia.org/wikipedia/commons/5/52/Seosan_Bird_Land.jpg"),
+      java.util.Map.entry("한국만화박물관", "https://upload.wikimedia.org/wikipedia/commons/3/30/Korea_Manhwa_Museum.JPG"),
+      java.util.Map.entry("한국이민사박물관", "https://upload.wikimedia.org/wikipedia/commons/9/96/Museum_of_Korea_Emigration_History_in_2016.JPG"),
+      java.util.Map.entry("한국조폐공사 화폐박물관", "https://upload.wikimedia.org/wikipedia/commons/e/e2/%ED%99%94%ED%8F%90%EB%B0%95%EB%AC%BC%EA%B4%80_Currency_Museum.jpg"),
+      java.util.Map.entry("한국은행 화폐금융박물관", "https://upload.wikimedia.org/wikipedia/commons/8/8e/Bank_of_Korea_20070103.jpg"),
+      java.util.Map.entry("한무숙문학관", "https://upload.wikimedia.org/wikipedia/commons/d/d9/The_Front_Gate_of_Han_Musuk_Museum.jpg")
+      // "화정박물관"은 위키 조회 결과가 국립중앙박물관 사진으로 잘못 연결돼(오매칭 확인, 2026-08-28)
+      // 신뢰할 수 없어 제외함 - 다른 소스로 확인 후 추가할 것.
+  );
+
   private final PlaceRepository placeRepository;
   private final PlaceDedupService placeDedupService;
   private final RestTemplate restTemplate = new RestTemplate();
@@ -80,6 +118,9 @@ public class MuseumSyncServiceImpl implements MuseumSyncService {
         place.setAddress(address);
         place.setLatitude(lat);
         place.setLongitude(lng);
+        if (place.getImageUrl() == null && NAME_IMAGES.containsKey(m.fcltyNm())) {
+          place.setImageUrl(NAME_IMAGES.get(m.fcltyNm()));
+        }
         placeRepository.save(place);
         updated++;
         continue;
@@ -97,6 +138,7 @@ public class MuseumSyncServiceImpl implements MuseumSyncService {
             .address(address)
             .latitude(lat)
             .longitude(lng)
+            .imageUrl(NAME_IMAGES.get(m.fcltyNm()))
             .externalSource(EXTERNAL_SOURCE)
             .externalId(externalId)
             .build();

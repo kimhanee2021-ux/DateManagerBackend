@@ -1,6 +1,8 @@
 package org.ict.datemanagerbackend.domain.aichat.controller;
 
 import lombok.RequiredArgsConstructor;
+import org.ict.datemanagerbackend.domain.aichat.dto.CourseRecommendationDto;
+import org.ict.datemanagerbackend.domain.aichat.dto.IntentSummaryDto;
 import org.ict.datemanagerbackend.domain.aichat.dto.Response.AiChatMessageResponse;
 import org.ict.datemanagerbackend.domain.aichat.dto.Response.AiChatSessionResponse;
 import org.ict.datemanagerbackend.domain.aichat.entity.AiChatMessage;
@@ -105,13 +107,73 @@ public class AiChatController {
       AiChatMessage aiMessage = aiChatService.sendMessage(me, sessionId, text, lat, lon);
       return ResponseEntity.ok(new AiChatMessageResponse(
           aiMessage.getId(), aiMessage.getSenderType(), aiMessage.getMessageText(), aiMessage.getCreatedAt(),
-          aiMessage.getFollowUpQuestions()));
+          aiMessage.getFollowUpQuestions(), aiMessage.getUpdatedStyleAxes()));
     } catch (IllegalArgumentException e) {
       return ResponseEntity.status(404).body(Map.of("error", e.getMessage()));
     } catch (Exception e) {
       // OpenAI 결제 미등록(401)이나 한도 초과(429) 등 외부 API 호출 실패를 여기서 잡는다.
       return ResponseEntity.status(502).body(Map.of("error", "AI 응답을 받는 중 오류가 발생했습니다: " + e.getMessage()));
     }
+  }
+
+  /**
+   * GET /api/aichat/course-recommendation - 홈탭 "AI 코스 추천" 배너용(2026-08-25 추가).
+   * 채팅 세션과 무관한 1회성 추천이라 sessionId가 필요 없다. lat/lon은 선택값 - 위치 권한을 안
+   * 줬으면 없이 보내도 되고(전국 대상으로 대체), 있으면 반경 10km로 좁혀서 추천한다.
+   */
+  @GetMapping("/course-recommendation")
+  public ResponseEntity<?> recommendCourse(Authentication authentication,
+                                            @RequestParam(required = false) String lat,
+                                            @RequestParam(required = false) String lon) {
+    if (authentication == null) {
+      return ResponseEntity.status(401).body(Map.of("error", "로그인이 필요합니다"));
+    }
+    User me = currentUser(authentication);
+    if (me == null) {
+      return ResponseEntity.status(404).body(Map.of("error", "사용자를 찾을 수 없습니다"));
+    }
+    List<CourseRecommendationDto> recommendation =
+        aiChatService.recommendCourse(me, parseNullableDouble(lat), parseNullableDouble(lon));
+    return ResponseEntity.ok(recommendation);
+  }
+
+  /**
+   * GET /api/aichat/place-coach/{placeId} - 장소 상세 화면 "AI 코치의 한마디"(2026-08-31 추가).
+   */
+  @GetMapping("/place-coach/{placeId}")
+  public ResponseEntity<?> explainPlace(Authentication authentication, @PathVariable Long placeId) {
+    if (authentication == null) {
+      return ResponseEntity.status(401).body(Map.of("error", "로그인이 필요합니다"));
+    }
+    User me = currentUser(authentication);
+    if (me == null) {
+      return ResponseEntity.status(404).body(Map.of("error", "사용자를 찾을 수 없습니다"));
+    }
+    try {
+      return ResponseEntity.ok(aiChatService.explainPlace(me, placeId));
+    } catch (IllegalArgumentException e) {
+      return ResponseEntity.status(404).body(Map.of("error", e.getMessage()));
+    }
+  }
+
+  /**
+   * GET /api/aichat/intent-summary - 홈탭 "최근 관심사" 인사이트 칩용(2026-08-25 추가).
+   * 대화 이력이 없으면 body 없이 204를 준다.
+   */
+  @GetMapping("/intent-summary")
+  public ResponseEntity<?> getIntentSummary(Authentication authentication) {
+    if (authentication == null) {
+      return ResponseEntity.status(401).body(Map.of("error", "로그인이 필요합니다"));
+    }
+    User me = currentUser(authentication);
+    if (me == null) {
+      return ResponseEntity.status(404).body(Map.of("error", "사용자를 찾을 수 없습니다"));
+    }
+    IntentSummaryDto summary = aiChatService.getIntentSummary(me);
+    if (summary == null) {
+      return ResponseEntity.noContent().build();
+    }
+    return ResponseEntity.ok(summary);
   }
 
   /** GET /api/aichat/sessions/{sessionId}/messages - 메시지 이력 조회 */
@@ -126,7 +188,7 @@ public class AiChatController {
     }
     try {
       List<AiChatMessageResponse> messages = aiChatService.getMessages(me, sessionId).stream()
-          .map(m -> new AiChatMessageResponse(m.getId(), m.getSenderType(), m.getMessageText(), m.getCreatedAt(), null))
+          .map(m -> new AiChatMessageResponse(m.getId(), m.getSenderType(), m.getMessageText(), m.getCreatedAt(), null, null))
           .toList();
       return ResponseEntity.ok(messages);
     } catch (IllegalArgumentException e) {

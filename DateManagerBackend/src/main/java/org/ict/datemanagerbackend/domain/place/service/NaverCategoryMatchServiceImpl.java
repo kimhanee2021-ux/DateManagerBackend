@@ -11,6 +11,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.util.UriComponentsBuilder;
@@ -40,10 +41,24 @@ public class NaverCategoryMatchServiceImpl implements NaverCategoryMatchService 
   // PlaceDedupServiceImpl과 동일 기준(약 200~280m) - 소스마다 지오코딩 좌표가 조금씩 달라서
   // 너무 좁히면(50m 등) 진짜 같은 곳도 놓친다.
   private static final double RADIUS_DEGREES = 0.0025;
+  // 연속으로 이만큼 API 호출 자체가 실패하면(할당량 초과/인증실패 등) 나머지를 다 "결과없음"으로
+  // 잘못 채우는 대신 배치를 멈춘다(2026-08-27) - 하루 할당량을 다 쓴 뒤에도 남은 수만 건을 계속
+  // 시도하면서 전부 apiNoResult로 오분류됐던 문제(2026-08-26 실측, 20000건 중 5건만 매칭) 때문.
+  private static final int CONSECUTIVE_ERROR_LIMIT = 20;
 
   private final PlaceRepository placeRepository;
   private final PlaceCategoryRepository placeCategoryRepository;
-  private final RestTemplate restTemplate = new RestTemplate();
+  // 타임아웃 미설정 시 네이버 응답이 느려지면 요청이 무한정 붙잡혀서 배치 전체가 느려지는 문제가
+  // 있었다(2026-08-26 실측 - 검색이 안 되는 케이스에서 유독 오래 걸림) - 3초/5초로 짧게 끊어서
+  // 실패를 빠르게 다음 장소로 넘긴다.
+  private final RestTemplate restTemplate = buildRestTemplate();
+
+  private static RestTemplate buildRestTemplate() {
+    SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
+    factory.setConnectTimeout(3000);
+    factory.setReadTimeout(5000);
+    return new RestTemplate(factory);
+  }
 
   @Value("${naver.search.client-id}")
   private String clientId;
@@ -63,6 +78,9 @@ public class NaverCategoryMatchServiceImpl implements NaverCategoryMatchService 
     int apiNoResult = 0;
     int noConfidentCandidate = 0;
     int noKeywordMatch = 0;
+    int apiError = 0;
+    int consecutiveApiErrors = 0;
+    boolean stoppedEarly = false;
 
     for (Place place : targets) {
       if (place.getLatitude() == null || place.getLongitude() == null
@@ -76,12 +94,25 @@ public class NaverCategoryMatchServiceImpl implements NaverCategoryMatchService 
           ? "공연"
           : PlaceCategoryKeywords.PARENT_ALIASES.getOrDefault(rawCategory, rawCategory);
 
+      // API 호출 자체가 실패한 것(타임아웃/인증실패/할당량초과 등)과, API는 정상 응답했지만 검색
+      // 결과가 진짜 없는 것을 구분한다 - 둘 다 candidates.isEmpty()로 뭉뚱그리면 할당량이 소진된
+      // 뒤에도 나머지 전부가 "결과없음"으로 잘못 집계된다.
       List<Candidate> candidates;
       try {
         candidates = search(regionPrefix(place.getAddress()) + " " + place.getName());
+        consecutiveApiErrors = 0;
       } catch (Exception e) {
         log.warn("네이버 지역 검색 실패 (placeId={}, name={})", place.getId(), place.getName(), e);
-        candidates = List.of();
+        apiError++;
+        consecutiveApiErrors++;
+        sleepBriefly();
+        if (consecutiveApiErrors >= CONSECUTIVE_ERROR_LIMIT) {
+          log.warn("네이버 API 연속 {}회 호출 실패 - 할당량 초과로 판단하고 배치를 중단합니다 (시도 {}건째)",
+              consecutiveApiErrors, attempted);
+          stoppedEarly = true;
+          break;
+        }
+        continue;
       }
       if (candidates.isEmpty()) {
         apiNoResult++;
@@ -118,9 +149,9 @@ public class NaverCategoryMatchServiceImpl implements NaverCategoryMatchService 
       sleepBriefly();
     }
 
-    log.info("네이버 카테고리 매칭 완료 - 시도 {}건 중 연결 {}건 (API결과없음 {}, 후보불확실 {}, 키워드매칭실패 {})",
-        attempted, matched, apiNoResult, noConfidentCandidate, noKeywordMatch);
-    return new MatchResult(attempted, matched, apiNoResult, noConfidentCandidate, noKeywordMatch);
+    log.info("네이버 카테고리 매칭 완료 - 시도 {}건 중 연결 {}건 (API결과없음 {}, 후보불확실 {}, 키워드매칭실패 {}, API오류 {}, 조기중단 {})",
+        attempted, matched, apiNoResult, noConfidentCandidate, noKeywordMatch, apiError, stoppedEarly);
+    return new MatchResult(attempted, matched, apiNoResult, noConfidentCandidate, noKeywordMatch, apiError, stoppedEarly);
   }
 
   // 후보 중 우리 장소와 좌표가 가장 가까운 것을 고르되, RADIUS_DEGREES를 벗어나면 아예 후보로

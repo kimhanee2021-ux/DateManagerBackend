@@ -258,6 +258,20 @@ public class AiChatServiceImpl implements AiChatService {
       AI: "%s"
       """;
 
+  // 홈탭 "최근 관심사" 인사이트 한 줄 생성용(2026-08-27 추가) - 원래는 의도 태그 1위만 뽑아서
+  // "OO를 가장 많이 물어봤어요"라고 기계적으로 채워 넣었는데, 전체 분포를 보여주고 자연스러운
+  // 문장으로 다듬어달라고 하면 훨씬 사람이 쓴 것 같은 코멘트가 나온다.
+  private static final String INTENT_INSIGHT_PROMPT = """
+      다음은 한 유저가 AI 데이트 코치와 나눈 대화에서 뽑힌 대화 주제별 횟수야:
+      %s
+
+      이 데이터를 보고, 유저의 최근 관심사를 짚어주는 자연스러운 한 문장 코멘트를 만들어줘.
+      홈 화면 인사이트 칩에 들어갈 짧은 문장이야. 조건:
+      - 30자 내외, 존댓말체("~하고 계시네요" 등)
+      - 이모지, 따옴표, 설명 없이 문장 하나만 출력
+      - 숫자(횟수)는 언급하지 말고 경향만 자연스럽게 표현
+      """;
+
   // 대화 중 후속 질문 추천용(2026-08-22 추가) - 사용자가 매번 처음부터 뭘 물어볼지 고민하지 않아도
   // 되게, 방금 오간 대화에 자연스럽게 이어질 질문을 AI가 직접 골라서 클릭 한 번으로 보낼 수 있게 한다.
   private static final String FOLLOWUP_PROMPT = """
@@ -270,12 +284,64 @@ public class AiChatServiceImpl implements AiChatService {
       AI: "%s"
       """;
 
+  // "AI 코스 추천"(홈탭 배너, 2026-08-25 추가)용 - 매칭점수 상위 후보를 우리가 먼저 추려서 주고,
+  // 그중 실제로 코스로 묶을 4곳만 AI가 고르게 한다(전체 장소 중에서 AI가 직접 고르게 하면 존재하지
+  // 않는 장소를 지어낼 위험이 있어서, 반드시 후보 목록 안에서만 고르도록 프롬프트로 제한한다).
+  private static final String COURSE_RECOMMENDATION_PROMPT = """
+      아래는 사용자의 성향값(6개 축, 0~100)과 후보 장소 목록이야. 이 사용자 성향에 가장 잘 어울리는
+      "하루 데이트 코스"로 묶을 장소 4곳을 후보 목록 "안에서만" 골라줘. 아래 형식의 JSON으로만 답해
+      (다른 설명 없이):
+      {"picks": [{"id": 123, "reason": "왜 이 장소를 골랐는지 20자 내외 한 줄"}]}
+
+      규칙:
+      - 반드시 4곳을 고르고, id는 후보 목록에 있는 값만 사용해(후보에 없는 id를 지어내지 마).
+      - 하루 동안 실제로 돌아다닐 수 있는 코스여야 해 - 같은 시/도(주소 앞부분)에 있는 곳 위주로
+        고르고, 서로 다른 지역(예: 서울과 제주)을 섞지 마.
+      - category가 겹치지 않게 최대한 다양하게 골라줘(같은 category만 4곳 고르지 마. 예: 콘서트
+        4개처럼).
+
+      [사용자 성향]
+      %s
+
+      [후보 장소 목록]
+      %s
+      """;
+
+  // 장소 상세 "AI 코치의 한마디"(2026-08-31) - 유저 성향과 장소 성향을 대조해 왜 이 장소가 맞는지
+  // 2문장 이내로 설명하게 한다. topAxes는 프론트 PERSONA_AXES(energetic/immersion/vibe/aesthetic/
+  // depth)와 이름을 맞춰서 프론트가 별도 매핑 없이 바로 성향 바를 그릴 수 있게 한다.
+  private static final String PLACE_COACH_EXPLANATION_PROMPT = """
+      아래는 사용자의 6대 성향값(0~100)과 장소 정보야. 이 장소가 왜 사용자 성향에 잘 맞는지, 애인처럼
+      편한 반말로 2문장 이내로 설명해줘. 다음 JSON 형식으로만 답해(다른 설명 없이):
+      {"message": "설명 문장", "topAxes": ["depth", "immersion"]}
+
+      규칙:
+      - topAxes는 energy/immersion/vibe/aesthetic/depth 중, 사용자 점수와 장소 점수가 둘 다 중립(50)에서
+        많이 벗어나 있고 서로 비슷한(=잘 맞는) 축을 1~2개만 골라. 특별히 두드러지는 축이 없으면 빈
+        배열로 둬도 돼.
+      - "편안해", "나쁘지 않아", "좋을 것 같아" 같은 두루뭉술한 표현만으로 문장을 채우지 마. 장소
+        정보에 있는 구체적인 사실(대표메뉴 이름, 정확한 영업시간, 가격, 세부분류명, 카테고리 등) 중
+        최소 1개는 문장에 직접 인용해서 근거로 삼아 - "이태리식 감바스가 대표메뉴라 가볍게 먹기 좋아"
+        처럼. 장소 정보가 정말 아무것도 없으면(카테고리뿐이면) 그때만 성향 설명 위주로 가되, 그 경우도
+        구체적으로 말해(예: "취향 깊이가 높은 편이라 조용히 대화 나누기 좋은 곳일 거야"처럼 축 이름을
+        직접 언급).
+      - 없는 정보를 지어내지 마(가격/웨이팅처럼 없는 값을 있는 것처럼 말하지 마).
+      - 과장하지 말고 담백하게, 20~30대 커플 앱 말투로.
+
+      [사용자 성향]
+      %s
+
+      [장소 정보]
+      %s
+      """;
+
   private final AiChatSessionRepository aiChatSessionRepository;
   private final AiChatMessageRepository aiChatMessageRepository;
   private final AiChatMessageIntentRepository aiChatMessageIntentRepository;
   private final AiChatMessageScoreRepository aiChatMessageScoreRepository;
   private final WeatherService weatherService;
   private final PlaceRepository placeRepository;
+  private final org.ict.datemanagerbackend.domain.place.repository.PlaceRealityRepository placeRealityRepository;
   private final UserStyleRepository userStyleRepository;
   private final org.ict.datemanagerbackend.domain.user.service.UserStyleUpdateService userStyleUpdateService;
   private final ObjectMapper objectMapper;
@@ -316,7 +382,7 @@ public class AiChatServiceImpl implements AiChatService {
         .messageText(userText)
         .build();
     aiChatMessageRepository.save(userMessage);
-    analyzeMessage(userMessage);
+    List<String> updatedStyleAxes = analyzeMessage(userMessage);
 
     // 상황 정보(현재 시각/날씨)는 대화 내용이 아니라 매 요청마다 새로 알려줘야 하는 값이라,
     // instructions로만 매번 새로 만들어 보낸다(대화 이력에는 안 쌓임). 근처 장소 목록은 더 이상
@@ -334,6 +400,9 @@ public class AiChatServiceImpl implements AiChatService {
         .messageText(result.text())
         .build();
     AiChatMessage saved = aiChatMessageRepository.save(aiMessage);
+    if (!updatedStyleAxes.isEmpty()) {
+      saved.setUpdatedStyleAxes(updatedStyleAxes);
+    }
 
     session.setLastResponseId(result.responseId());
     if (isFirstTurn) {
@@ -454,13 +523,22 @@ public class AiChatServiceImpl implements AiChatService {
         + "[시스템 제공 정보]로 알려준 오늘 날짜와 비교해서 언제 열리는지도 같이 말해줘.";
   }
 
+  // SCORE_TYPES(ENERGY 등)와 짝을 이루는 한글 이름 - "성향이 이렇게 바뀌었어요" 안내용.
+  private static final Map<String, String> AXIS_KOREAN_NAME = Map.of(
+      "ENERGY", "에너지", "IMMERSION", "몰입감", "VIBE", "분위기", "AESTHETIC", "심미감", "DEPTH", "깊이"
+  );
+
   /**
    * 사용자 메시지 하나를 별도의 OpenAI 호출로 분석해서 의도 태그(AiChatMessageIntent)와
    * 성향점수(AiChatMessageScore)를 뽑아 저장한다. 실제 채팅 응답과는 무관한 부가 기능이라,
    * 분석이 실패해도(JSON 파싱 실패, API 호출 실패 등) 로그만 남기고 넘어간다 - 분석 실패 때문에
    * 사용자가 챗봇 답변을 못 받으면 안 되니까(날씨 조회 실패를 무시하는 것과 같은 이유).
+   *
+   * @return 이번 메시지로 UserStyle이 실시간 갱신된 축의 한글 이름 목록(2026-08-25 추가) - 예전엔
+   *     이 갱신이 화면에 전혀 안 보이고 조용히 일어났는데, 이제 챗봇 응답에 같이 실어서 보여준다.
    */
-  private void analyzeMessage(AiChatMessage userMessage) {
+  private List<String> analyzeMessage(AiChatMessage userMessage) {
+    List<String> updatedAxes = new ArrayList<>();
     try {
       String content = requestAnalysisCompletion(userMessage.getMessageText());
       JsonNode root = objectMapper.readTree(content);
@@ -489,6 +567,7 @@ public class AiChatServiceImpl implements AiChatService {
           // 이건 그 값을 누적해서 유저의 실제 성향 점수 자체를 서서히 움직이는 별도 단계다.
           try {
             userStyleUpdateService.applyAiChatMention(userMessage.getSender().getId(), scoreType, scoreValue);
+            updatedAxes.add(AXIS_KOREAN_NAME.getOrDefault(scoreType, scoreType));
           } catch (Exception ex) {
             log.warn("성향값 실시간 갱신 실패 (messageId={}, axis={})", userMessage.getId(), scoreType, ex);
           }
@@ -497,6 +576,7 @@ public class AiChatServiceImpl implements AiChatService {
     } catch (Exception e) {
       log.warn("메시지 의도/성향점수 분석 실패 (messageId={})", userMessage.getId(), e);
     }
+    return updatedAxes;
   }
 
   /**
@@ -561,6 +641,368 @@ public class AiChatServiceImpl implements AiChatService {
       if (text != null && !text.isBlank()) followUps.add(text.trim());
     }
     return followUps;
+  }
+
+  /**
+   * "AI 코스 추천" - 유저 성향값과 6개 축 거리가 가까운 장소를 우리 쪽에서 먼저 15곳으로 추리고
+   * (매칭점수 계산은 프론트 placeMatching.js의 pickMatchingAxes와 같은 방식을 서버에서 장소 단위로
+   * 적용한 것), 그중 4곳을 OpenAI가 코스로 묶어 고르게 한다. OpenAI 호출/파싱이 실패하면 매칭점수
+   * 상위 4곳으로 조용히 대체한다(챗봇의 다른 부가 기능들과 같은 원칙 - 실패해도 화면이 비면 안 됨).
+   */
+  @Override
+  public List<org.ict.datemanagerbackend.domain.aichat.dto.CourseRecommendationDto> recommendCourse(User user, Double lat, Double lon) {
+    org.ict.datemanagerbackend.domain.user.entity.UserStyle style =
+        userStyleRepository.findById(user.getId()).orElse(null);
+
+    Map<String, Integer> userScores = new LinkedHashMap<>();
+    userScores.put("energy", styleAxisOrDefault(style == null ? null : style.getInitEnergy()));
+    userScores.put("immersion", styleAxisOrDefault(style == null ? null : style.getInitImmersion()));
+    userScores.put("vibe", styleAxisOrDefault(style == null ? null : style.getInitVibe()));
+    userScores.put("aesthetic", styleAxisOrDefault(style == null ? null : style.getInitAesthetic()));
+    userScores.put("depth", styleAxisOrDefault(style == null ? null : style.getInitDepth()));
+    userScores.put("pacing", styleAxisOrDefault(style == null ? null : style.getInitPacing()));
+
+    List<Place> pool;
+    if (lat != null && lon != null) {
+      // 내 위치 반경 10km 이내로만 추천(2026-08-25 추가) - 예전엔 지역 필터가 전혀 없어서 서울/
+      // 부산/제주가 한 코스에 섞여 나오는 문제가 있었다("지역이 너무 넓다" 실사용 피드백). 위경도
+      // 사각형으로 넉넉히 1차로 추린 뒤, haversine으로 정확한 원형 10km만 다시 거른다 - 카테고리별로
+      // 나눠 모으던 예전 방식(다양성 확보용)은 이제 필요 없다. 반경 안에 있는 장소들 자체가 이미
+      // 카테고리가 섞여 있고, 카테고리 쏠림 방지 로직은 아래에서 그대로 유지된다.
+      double latDelta = 10.0 / 111.32; // 위도 1도 ≈ 111.32km
+      double lonDelta = 10.0 / (111.32 * Math.cos(Math.toRadians(lat)));
+      List<Place> boxCandidates = placeRepository.findByLatitudeBetweenAndLongitudeBetween(
+          lat - latDelta, lat + latDelta, lon - lonDelta, lon + lonDelta,
+          org.springframework.data.domain.PageRequest.of(0, 400));
+      pool = boxCandidates.stream()
+          .filter(p -> haversineMeters(lat, lon, p.getLatitude(), p.getLongitude()) <= 10000)
+          .toList();
+    } else {
+      // 위치 정보가 없으면(권한 거부 등) 예전 방식(카테고리별로 나눠 모으기)으로 대체.
+      pool = new ArrayList<>();
+      org.springframework.data.domain.Sort byIdDesc =
+          org.springframework.data.domain.Sort.by(org.springframework.data.domain.Sort.Direction.DESC, "id");
+      for (String category : List.of("맛집", "전시", "박물관·미술관", "관광지", "액티비티", "쇼핑")) {
+        pool.addAll(placeRepository.searchByCategoryIn(
+            CATEGORY_ALIASES.get(category), null, "", null, null, null, null, false, false, null, false,
+            org.springframework.data.domain.PageRequest.of(0, 20, byIdDesc)).getContent());
+      }
+      for (String category : List.of("공연", "숙박")) {
+        pool.addAll(placeRepository.searchByCategoryIn(
+            CATEGORY_ALIASES.get(category), null, "", null, null, null, null, false, false, null, false,
+            org.springframework.data.domain.PageRequest.of(0, 8, byIdDesc)).getContent());
+      }
+    }
+
+    record Candidate(Place place, org.ict.datemanagerbackend.domain.place.entity.PlaceCategory category, int matchScore) {}
+
+    List<Candidate> scored = pool.stream()
+        .map(p -> {
+          org.ict.datemanagerbackend.domain.place.entity.PlaceCategory c = p.getPlaceCategory();
+          if (c == null) return null;
+          int score = (100 - Math.abs(placeAxisOrDefault(c.getScoreEnergy()) - userScores.get("energy")))
+              + (100 - Math.abs(placeAxisOrDefault(c.getScoreImmersion()) - userScores.get("immersion")))
+              + (100 - Math.abs(placeAxisOrDefault(c.getScoreVibe()) - userScores.get("vibe")))
+              + (100 - Math.abs(placeAxisOrDefault(c.getScoreAesthetic()) - userScores.get("aesthetic")))
+              + (100 - Math.abs(placeAxisOrDefault(c.getScoreDepth()) - userScores.get("depth")))
+              + (100 - Math.abs(placeAxisOrDefault(c.getScorePacing()) - userScores.get("pacing")));
+          return new Candidate(p, c, score);
+        })
+        .filter(java.util.Objects::nonNull)
+        .toList();
+
+    // 같은 카테고리가 매칭점수 상위를 통째로 차지하는 걸 막는다(2026-08-25) - PlaceCategory 점수는
+    // 세부분류 단위라 같은 세부분류 장소는 전부 점수가 동일해서, 그냥 상위 15개를 자르면 한
+    // 카테고리로만 몰릴 수 있다(실제 테스트로 발견 - 박물관/미술관 4곳만 추천됨). 카테고리별 상위
+    // 3개까지만 남기고 그중에서 전체 상위를 추린다.
+    List<Candidate> ranked = scored.stream()
+        .collect(Collectors.groupingBy(c -> c.place().getCategory()))
+        .values().stream()
+        .flatMap(group -> group.stream()
+            .sorted((a, b) -> b.matchScore() - a.matchScore())
+            .limit(3))
+        .sorted((a, b) -> b.matchScore() - a.matchScore())
+        .limit(16)
+        .toList();
+
+    if (ranked.isEmpty()) {
+      return List.of();
+    }
+
+    Map<Long, Candidate> candidateById = ranked.stream()
+        .collect(Collectors.toMap(c -> c.place().getId(), c -> c));
+
+    try {
+      String userScoreText = userScores.entrySet().stream()
+          .map(e -> e.getKey() + ": " + e.getValue())
+          .collect(Collectors.joining(", "));
+      String candidateText = ranked.stream()
+          .map(c -> "id:%d name:%s category:%s address:%s".formatted(
+              c.place().getId(), c.place().getName(), c.place().getCategory(),
+              c.place().getAddress() != null ? c.place().getAddress() : ""))
+          .collect(Collectors.joining("\n"));
+
+      String content = requestChatCompletionText(
+          COURSE_RECOMMENDATION_PROMPT.formatted(userScoreText, candidateText), true);
+      JsonNode root = objectMapper.readTree(content);
+
+      List<org.ict.datemanagerbackend.domain.aichat.dto.CourseRecommendationDto> result = new ArrayList<>();
+      for (JsonNode pick : root.path("picks")) {
+        if (!pick.path("id").isNumber()) continue;
+        Candidate candidate = candidateById.get(pick.path("id").asLong());
+        if (candidate == null) continue; // AI가 후보 목록에 없는 id를 지어낸 경우 방어
+        result.add(new org.ict.datemanagerbackend.domain.aichat.dto.CourseRecommendationDto(
+            candidate.place().getId(), candidate.place().getName(), candidate.place().getCategory(),
+            candidate.category().getSubCategory(), candidate.place().getAddress(),
+            candidate.place().getImageUrl(), pick.path("reason").asText("")));
+      }
+      if (!result.isEmpty()) {
+        return result;
+      }
+    } catch (Exception e) {
+      log.warn("AI 코스 추천 실패, 매칭점수 상위로 대체 (userId={})", user.getId(), e);
+    }
+
+    return ranked.stream()
+        .limit(4)
+        .map(c -> new org.ict.datemanagerbackend.domain.aichat.dto.CourseRecommendationDto(
+            c.place().getId(), c.place().getName(), c.place().getCategory(),
+            c.category().getSubCategory(), c.place().getAddress(), c.place().getImageUrl(),
+            "성향에 잘 맞는 곳이에요"))
+        .toList();
+  }
+
+  private double haversineMeters(double lat1, double lon1, Double lat2, Double lon2) {
+    if (lat2 == null || lon2 == null) return Double.MAX_VALUE;
+    double earthRadius = 6371000;
+    double dLat = Math.toRadians(lat2 - lat1);
+    double dLon = Math.toRadians(lon2 - lon1);
+    double a = Math.sin(dLat / 2) * Math.sin(dLat / 2)
+        + Math.cos(Math.toRadians(lat1)) * Math.cos(Math.toRadians(lat2))
+        * Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    return 2 * earthRadius * Math.asin(Math.sqrt(a));
+  }
+
+  private static final String REPORT_SUMMARY_PROMPT = """
+      아래는 서비스에 접수된 처리 대기 중인 신고 사유 목록이야. 관리자가 한눈에 파악할 수 있게
+      요약해줘. 비슷한 유형끼리 묶어서 "- 유형: 건수, 짧은 설명" 형식의 불릿 목록으로, 전체
+      3~5줄 이내로 작성해. 설명 없이 목록만 출력해.
+
+      [신고 사유 목록]
+      %s
+      """;
+
+  /** 관리자 페이지 "신고 요약" - 신고 건수가 늘어날수록 사유를 하나씩 읽기 번거로워서 추가(2026-08-25). */
+  @Override
+  public String summarizeReports(List<String> reasons) {
+    if (reasons.isEmpty()) return "";
+    String reasonText = reasons.stream()
+        .map(r -> "- " + r)
+        .collect(Collectors.joining("\n"));
+    return requestChatCompletionText(REPORT_SUMMARY_PROMPT.formatted(reasonText), false).trim();
+  }
+
+  /**
+   * 장소 상세 화면 "AI 코치의 한마디"(2026-08-31). 실패해도 화면이 비면 안 되니(챗봇의 다른 부가
+   * 기능들과 같은 원칙) 담백한 기본 문구로 조용히 대체한다.
+   */
+  @Override
+  public org.ict.datemanagerbackend.domain.aichat.dto.PlaceCoachExplanationDto explainPlace(User user, Long placeId) {
+    Place place = placeRepository.findById(placeId)
+        .orElseThrow(() -> new IllegalArgumentException("장소를 찾을 수 없습니다"));
+    org.ict.datemanagerbackend.domain.user.entity.UserStyle style =
+        userStyleRepository.findById(user.getId()).orElse(null);
+
+    Map<String, Integer> userScores = new LinkedHashMap<>();
+    userScores.put("energy", styleAxisOrDefault(style == null ? null : style.getInitEnergy()));
+    userScores.put("immersion", styleAxisOrDefault(style == null ? null : style.getInitImmersion()));
+    userScores.put("vibe", styleAxisOrDefault(style == null ? null : style.getInitVibe()));
+    userScores.put("aesthetic", styleAxisOrDefault(style == null ? null : style.getInitAesthetic()));
+    userScores.put("depth", styleAxisOrDefault(style == null ? null : style.getInitDepth()));
+
+    org.ict.datemanagerbackend.domain.place.entity.PlaceCategory category = place.getPlaceCategory();
+    Map<String, Integer> placeScores = new LinkedHashMap<>();
+    placeScores.put("energy", placeAxisOrDefault(category == null ? null : category.getScoreEnergy()));
+    placeScores.put("immersion", placeAxisOrDefault(category == null ? null : category.getScoreImmersion()));
+    placeScores.put("vibe", placeAxisOrDefault(category == null ? null : category.getScoreVibe()));
+    placeScores.put("aesthetic", placeAxisOrDefault(category == null ? null : category.getScoreAesthetic()));
+    placeScores.put("depth", placeAxisOrDefault(category == null ? null : category.getScoreDepth()));
+
+    org.ict.datemanagerbackend.domain.place.entity.PlaceReality reality =
+        placeRealityRepository.findByPlace_Id(placeId).orElse(null);
+
+    String userScoreText = userScores.entrySet().stream()
+        .map(e -> e.getKey() + ": " + e.getValue())
+        .collect(Collectors.joining(", "));
+
+    StringBuilder placeInfo = new StringBuilder();
+    placeInfo.append("이름: ").append(place.getName());
+    placeInfo.append(", 카테고리: ").append(category != null ? category.getSubCategory() : place.getCategory());
+    placeInfo.append(", 성향점수(").append(
+        placeScores.entrySet().stream().map(e -> e.getKey() + ": " + e.getValue()).collect(Collectors.joining(", "))
+    ).append(")");
+    if (reality != null) {
+      if (reality.getUseTime() != null) placeInfo.append(", 영업시간: ").append(reality.getUseTime());
+      if (reality.getMenuInfo() != null) placeInfo.append(", 대표메뉴: ").append(reality.getMenuInfo());
+      if (reality.getPriceText() != null) placeInfo.append(", 가격: ").append(reality.getPriceText());
+      if (reality.getPackingInfo() != null) placeInfo.append(", 포장: ").append(reality.getPackingInfo());
+    }
+
+    try {
+      String content = requestChatCompletionText(
+          PLACE_COACH_EXPLANATION_PROMPT.formatted(userScoreText, placeInfo), true);
+      JsonNode root = objectMapper.readTree(content);
+      String message = root.path("message").asText("");
+      List<String> topAxes = new ArrayList<>();
+      for (JsonNode axis : root.path("topAxes")) {
+        String axisId = axis.asText(null);
+        if (axisId != null && userScores.containsKey(axisId)) topAxes.add(axisId);
+      }
+      if (!message.isBlank()) {
+        return new org.ict.datemanagerbackend.domain.aichat.dto.PlaceCoachExplanationDto(message, topAxes);
+      }
+    } catch (Exception e) {
+      log.warn("AI 코치 장소 설명 생성 실패 (placeId={})", placeId, e);
+    }
+    return new org.ict.datemanagerbackend.domain.aichat.dto.PlaceCoachExplanationDto(
+        "이 장소, 우리 성향이랑 잘 맞을 것 같아 골라봤어.", List.of());
+  }
+
+  private static final String FUND_GOAL_PARSE_PROMPT = """
+      사용자가 "AI 스마트 자금 플래너"에 자연어로 자금 목표를 입력했어. 아래 문장에서 금액(원),
+      기간(개월), 목적, 여행지(있으면)를 뽑아서 JSON으로만 답해.
+
+      규칙:
+      - amount와 periodMonth 둘 중 하나라도 뽑을 수 없으면 needsClarification을 true로 하고,
+        무엇이 부족한지 짧고 친근하게 되묻는 문장을 question에 담아. 이때 다른 필드는 전부 null.
+      - amount는 "150만원"처럼 만/억 단위 한글 표현도 원 단위 숫자로 환산해서 정수로.
+      - periodMonth는 "6개월"→6, "1년"→12처럼 개월 수 정수로.
+      - category는 "여행"/"기념일"/"결혼"/"기타" 중 문맥에 맞는 하나로. 명확히 안 드러나면 "기타".
+      - destinationCountry는 여행지 지명(도시/국가 원문, 예: "도쿄")을 그대로 - 여행 목적이 아니거나
+        지명이 없으면 null.
+      - title은 "도쿄 여행 자금"처럼 12자 이내 짧은 제목으로 새로 지어.
+
+      JSON 형식: {"needsClarification": boolean, "question": string|null, "title": string|null,
+      "amount": number|null, "periodMonth": number|null, "category": string|null,
+      "destinationCountry": string|null}
+
+      사용자 입력: "%s"
+      """;
+
+  /**
+   * AI 스마트 자금 플래너 - 자연어 목표 파싱(2026-08-31). 파싱 자체가 실패하면(네트워크/모델 오류)
+   * "다시 말씀해달라"는 재질문으로 폴백한다 - 다른 AI 부가기능과 달리 이건 사용자 입력을 그대로
+   * 반영해야 하는 기능이라 그럴듯한 기본값으로 대체할 수 없기 때문.
+   */
+  @Override
+  public org.ict.datemanagerbackend.domain.aichat.dto.FundGoalParseDto parseFundGoal(String userText) {
+    try {
+      String content = requestChatCompletionText(FUND_GOAL_PARSE_PROMPT.formatted(userText), true);
+      JsonNode root = objectMapper.readTree(content);
+      boolean needsClarification = root.path("needsClarification").asBoolean(false);
+      if (needsClarification || !root.path("amount").isNumber() || !root.path("periodMonth").isNumber()) {
+        String question = root.path("question").asText(null);
+        if (question == null || question.isBlank()) {
+          question = "목표 금액과 기간을 조금 더 구체적으로 말해줄래?";
+        }
+        return new org.ict.datemanagerbackend.domain.aichat.dto.FundGoalParseDto(
+            true, question, null, null, null, null, null);
+      }
+      String title = root.path("title").asText(null);
+      if (title == null || title.isBlank()) title = "우리의 자금 목표";
+      String category = root.path("category").asText(null);
+      if (category == null || category.isBlank()) category = "기타";
+      String destination = root.path("destinationCountry").asText(null);
+      if (destination != null && destination.isBlank()) destination = null;
+      return new org.ict.datemanagerbackend.domain.aichat.dto.FundGoalParseDto(
+          false, null, title, root.path("amount").asLong(), root.path("periodMonth").asInt(),
+          category, destination);
+    } catch (Exception e) {
+      log.warn("AI 자금 목표 파싱 실패", e);
+      return new org.ict.datemanagerbackend.domain.aichat.dto.FundGoalParseDto(
+          true, "목표 설정 중에 문제가 생겼어. 조금 더 구체적으로(예: \"6개월 안에 150만원\") 다시 말해줄래?",
+          null, null, null, null, null);
+    }
+  }
+
+  private static final String FUND_GOAL_COMMENT_PROMPT = """
+      커플 또는 개인이 아래 자금 목표를 모으고 있어. 진행 상황을 응원하는 짧은 코멘트 한 문장
+      (30자 이내, 이모지 없이)을 만들어줘. 설명 없이 문장 하나만 출력해.
+
+      목표: %s, 목표금액: %,d원, 현재모은금액: %,d원, 목표기간: %d개월
+      """;
+
+  /** AI 스마트 자금 플래너 대시보드 브리핑 코멘트 - 하루 1회만 재생성하는 캐싱은 호출부(FinancialPlannerServiceImpl)에서 처리. */
+  @Override
+  public String generateFundGoalComment(String title, long targetAmount, long currentAmount, int targetPeriodMonth) {
+    try {
+      String content = requestChatCompletionText(
+          FUND_GOAL_COMMENT_PROMPT.formatted(title, targetAmount, currentAmount, targetPeriodMonth), false);
+      if (content == null || content.isBlank()) throw new IllegalStateException("empty");
+      return content.trim().replaceAll("^[\"']|[\"']$", "");
+    } catch (Exception e) {
+      log.warn("AI 자금 목표 코멘트 생성 실패", e);
+      long percent = targetAmount > 0 ? Math.min(100, currentAmount * 100 / targetAmount) : 0;
+      return "지금까지 " + percent + "% 모았어요, 조금씩 잘 가고 있어요.";
+    }
+  }
+
+  private int styleAxisOrDefault(Double value) {
+    return value != null ? (int) Math.round(value) : 50;
+  }
+
+  private int placeAxisOrDefault(Integer value) {
+    return value != null ? value : 50;
+  }
+
+  // INTENT_TAGS와 짝을 이루는 한글 라벨 - "최근 관심사" 칩에 태그 코드 그대로 노출하면 안 되니.
+  private static final Map<String, String> INTENT_LABELS = Map.of(
+      "PLACE_RECOMMENDATION", "장소 추천",
+      "GIFT_ADVICE", "선물 고민",
+      "CONVERSATION_TOPIC", "대화 주제 고민",
+      "RELATIONSHIP_CONCERN", "연애 고민",
+      "GENERAL_CHAT", "일상 대화"
+  );
+
+  /**
+   * 저장만 되고 안 쓰이던 의도 태그(AiChatMessageIntent)를 집계해서 재활용한다. 전체 분포를
+   * OpenAI에 한 번 더 보내 자연어 인사이트 문장을 붙이고, 실패하면(네트워크 오류 등) insight만
+   * null로 남겨서 프론트가 기존 템플릿 문구로 대체하게 한다 - 다른 부가 AI 기능들과 동일한
+   * "실패해도 화면이 비면 안 된다" 원칙.
+   */
+  @Override
+  public org.ict.datemanagerbackend.domain.aichat.dto.IntentSummaryDto getIntentSummary(User user) {
+    List<Object[]> counts = aiChatMessageIntentRepository.countIntentTagsByUserId(user.getId());
+    if (counts.isEmpty()) return null;
+
+    Object[] top = counts.get(0);
+    String tag = (String) top[0];
+    long count = ((Number) top[1]).longValue();
+
+    String insight = null;
+    try {
+      insight = requestIntentInsight(counts);
+    } catch (Exception e) {
+      log.warn("의도 요약 인사이트 생성 실패 (userId={})", user.getId(), e);
+    }
+
+    return new org.ict.datemanagerbackend.domain.aichat.dto.IntentSummaryDto(
+        tag, INTENT_LABELS.getOrDefault(tag, tag), count, insight);
+  }
+
+  /** 의도 태그 분포([tag, count] 목록)를 사람이 읽는 텍스트로 바꿔서 인사이트 프롬프트에 채워 넣는다. */
+  private String requestIntentInsight(List<Object[]> counts) {
+    String distribution = counts.stream()
+        .map(row -> {
+          String tag = (String) row[0];
+          long count = ((Number) row[1]).longValue();
+          return "%s: %d회".formatted(INTENT_LABELS.getOrDefault(tag, tag), count);
+        })
+        .collect(java.util.stream.Collectors.joining(", "));
+
+    String content = requestChatCompletionText(INTENT_INSIGHT_PROMPT.formatted(distribution), false);
+    if (content == null || content.isBlank()) return null;
+    return content.trim().replaceAll("^[\"']|[\"']$", "");
   }
 
   /** requestResponse()의 반환값 - 답변 텍스트와, 다음 턴에 이어 보낼 응답 id를 함께 담는다. */
