@@ -44,6 +44,11 @@ public class UserCalendar {
   @Column(name = "course_group_id")
   private Long courseGroupId;
 
+  // 커플 일정으로 등록됐는지(2026-09-01, 되돌려졌던 프론트 전용 기능을 백엔드까지 갖춰 재구현) -
+  // true면 조회 시 파트너의 캘린더에도 같이 보여준다(UserCalendarServiceImpl.getMonthlyCalendars 참고).
+  @Column(name = "couple_event")
+  private Boolean coupleEvent;
+
   @Column(nullable = false,insertable = false,updatable = false,name = "CREATED_AT")
   @ColumnDefault("SYSTIMESTAMP")
   private LocalDateTime createdAt;

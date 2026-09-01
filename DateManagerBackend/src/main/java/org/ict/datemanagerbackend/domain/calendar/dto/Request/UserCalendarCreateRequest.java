@@ -14,4 +14,5 @@ public class UserCalendarCreateRequest {
   String description;
   LocalDate targetDate;
   Long courseGroupId;
+  Boolean coupleEvent;
 }
