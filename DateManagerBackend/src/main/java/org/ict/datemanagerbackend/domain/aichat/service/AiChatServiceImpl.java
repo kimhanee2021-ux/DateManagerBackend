@@ -32,6 +32,7 @@ import tools.jackson.databind.ObjectMapper;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -665,16 +666,16 @@ public class AiChatServiceImpl implements AiChatService {
     List<Place> pool;
     if (lat != null && lon != null) {
       // 내 위치 반경 10km 이내로만 추천(2026-08-25 추가) - 예전엔 지역 필터가 전혀 없어서 서울/
-      // 부산/제주가 한 코스에 섞여 나오는 문제가 있었다("지역이 너무 넓다" 실사용 피드백). 위경도
-      // 사각형으로 넉넉히 1차로 추린 뒤, haversine으로 정확한 원형 10km만 다시 거른다 - 카테고리별로
-      // 나눠 모으던 예전 방식(다양성 확보용)은 이제 필요 없다. 반경 안에 있는 장소들 자체가 이미
-      // 카테고리가 섞여 있고, 카테고리 쏠림 방지 로직은 아래에서 그대로 유지된다.
-      double latDelta = 10.0 / 111.32; // 위도 1도 ≈ 111.32km
-      double lonDelta = 10.0 / (111.32 * Math.cos(Math.toRadians(lat)));
-      List<Place> boxCandidates = placeRepository.findByLatitudeBetweenAndLongitudeBetween(
-          lat - latDelta, lat + latDelta, lon - lonDelta, lon + lonDelta,
-          org.springframework.data.domain.PageRequest.of(0, 400));
-      pool = boxCandidates.stream()
+      // 부산/제주가 한 코스에 섞여 나오는 문제가 있었다("지역이 너무 넓다" 실사용 피드백).
+      // findByLatitudeBetweenAndLongitudeBetween(사각형, 정렬 없음)으로 400개를 뽑던 이전 방식은
+      // ORDER BY가 없어서 실제로는 "가까운 400개"가 아니라 DB가 반환하는 임의 순서의 400개였고,
+      // 그 결과 반경 안에 맛집/관광지가 훨씬 많이 있어도 물리적으로 먼저 저장된 숙박 데이터가
+      // 400개를 다 채워버려 추천이 숙박으로만 쏠리는 문제가 있었다(2026-09-01 실사용 발견 -
+      // 강남/종로/홍대 세 곳 모두 후보 373~355개가 100% 숙박이었음, 반면 실제 거리순 정렬을 쓰는
+      // findNearestPlaces로는 같은 좌표에서 맛집 300개·관광지 143개가 정상적으로 잡힘).
+      // 홈탭 "지역 기반 추천"에서 이미 쓰고 검증된 findNearestPlaces(하버사인 거리순 정렬)로 교체.
+      List<Place> nearest = placeRepository.findNearestPlaces(lat, lon, 400);
+      pool = nearest.stream()
           .filter(p -> haversineMeters(lat, lon, p.getLatitude(), p.getLongitude()) <= 10000)
           .toList();
     } else {
@@ -693,8 +694,6 @@ public class AiChatServiceImpl implements AiChatService {
             org.springframework.data.domain.PageRequest.of(0, 8, byIdDesc)).getContent());
       }
     }
-
-    record Candidate(Place place, org.ict.datemanagerbackend.domain.place.entity.PlaceCategory category, int matchScore) {}
 
     List<Candidate> scored = pool.stream()
         .map(p -> {
@@ -746,30 +745,67 @@ public class AiChatServiceImpl implements AiChatService {
           COURSE_RECOMMENDATION_PROMPT.formatted(userScoreText, candidateText), true);
       JsonNode root = objectMapper.readTree(content);
 
-      List<org.ict.datemanagerbackend.domain.aichat.dto.CourseRecommendationDto> result = new ArrayList<>();
+      List<Candidate> picked = new ArrayList<>();
+      Map<Long, String> reasonById = new LinkedHashMap<>();
       for (JsonNode pick : root.path("picks")) {
         if (!pick.path("id").isNumber()) continue;
         Candidate candidate = candidateById.get(pick.path("id").asLong());
         if (candidate == null) continue; // AI가 후보 목록에 없는 id를 지어낸 경우 방어
-        result.add(new org.ict.datemanagerbackend.domain.aichat.dto.CourseRecommendationDto(
-            candidate.place().getId(), candidate.place().getName(), candidate.place().getCategory(),
-            candidate.category().getSubCategory(), candidate.place().getAddress(),
-            candidate.place().getImageUrl(), pick.path("reason").asText("")));
+        picked.add(candidate);
+        reasonById.put(candidate.place().getId(), pick.path("reason").asText(""));
       }
-      if (!result.isEmpty()) {
-        return result;
+      // 프롬프트에 "카테고리 겹치지 않게" 지시를 넣어도 AI가 그대로 안 지킬 때가 있어서(예: 숙박
+      // 4곳을 그대로 고름, 2026-09-01 실사용 발견) 서버에서 한 번 더 검증한다 - 같은 카테고리가
+      // MAX_PICKS_PER_CATEGORY를 넘으면 이 응답 자체를 버리고 아래 결정적 방식으로 대체한다.
+      boolean diverse = picked.stream()
+          .collect(Collectors.groupingBy(c -> c.place().getCategory(), Collectors.counting()))
+          .values().stream().allMatch(count -> count <= MAX_PICKS_PER_CATEGORY);
+      if (!picked.isEmpty() && diverse) {
+        return picked.stream()
+            .map(c -> new org.ict.datemanagerbackend.domain.aichat.dto.CourseRecommendationDto(
+                c.place().getId(), c.place().getName(), c.place().getCategory(),
+                c.category().getSubCategory(), c.place().getAddress(),
+                c.place().getImageUrl(), reasonById.get(c.place().getId())))
+            .toList();
       }
     } catch (Exception e) {
       log.warn("AI 코스 추천 실패, 매칭점수 상위로 대체 (userId={})", user.getId(), e);
     }
 
-    return ranked.stream()
-        .limit(4)
+    return selectDiverseTop(ranked, 4, MAX_PICKS_PER_CATEGORY).stream()
         .map(c -> new org.ict.datemanagerbackend.domain.aichat.dto.CourseRecommendationDto(
             c.place().getId(), c.place().getName(), c.place().getCategory(),
             c.category().getSubCategory(), c.place().getAddress(), c.place().getImageUrl(),
             "성향에 잘 맞는 곳이에요"))
         .toList();
+  }
+
+  private static final int MAX_PICKS_PER_CATEGORY = 2;
+
+  // recommendCourse 전용 후보 - 원래 메서드 안 로컬 record였는데, 카테고리 다양성 검증을
+  // selectDiverseTop이라는 별도 메서드로 빼면서 클래스 레벨로 옮겼다(2026-09-01).
+  private record Candidate(Place place, org.ict.datemanagerbackend.domain.place.entity.PlaceCategory category, int matchScore) {}
+
+  // 점수 순으로 훑으면서 카테고리당 maxPerCategory개까지만 채택한다. 반경 안에 카테고리가
+  // 너무 편중돼(예: 숙박뿐인 지역) limit을 못 채우면, 추천이 아예 안 뜨는 것보단 나으니
+  // 제한 없이 나머지를 채워 limit을 맞춘다(2026-09-01).
+  private List<Candidate> selectDiverseTop(List<Candidate> pool, int limit, int maxPerCategory) {
+    List<Candidate> selected = new ArrayList<>();
+    Map<String, Integer> counts = new HashMap<>();
+    for (Candidate c : pool) {
+      if (selected.size() >= limit) break;
+      String category = c.place().getCategory();
+      if (counts.getOrDefault(category, 0) >= maxPerCategory) continue;
+      selected.add(c);
+      counts.merge(category, 1, Integer::sum);
+    }
+    if (selected.size() < limit) {
+      for (Candidate c : pool) {
+        if (selected.size() >= limit) break;
+        if (!selected.contains(c)) selected.add(c);
+      }
+    }
+    return selected;
   }
 
   private double haversineMeters(double lat1, double lon1, Double lat2, Double lon2) {
