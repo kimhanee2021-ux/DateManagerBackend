@@ -1,5 +1,6 @@
 package org.ict.datemanagerbackend.domain.user.service;
 
+import org.ict.datemanagerbackend.domain.couple.repository.CoupleMemberRepository;
 import org.ict.datemanagerbackend.domain.user.dto.SaveOnboardingStyleRequest;
 import org.ict.datemanagerbackend.domain.user.entity.User;
 import org.ict.datemanagerbackend.domain.user.entity.UserStyle;
@@ -16,13 +17,16 @@ public class UserStyleServiceImpl implements UserStyleService {
 
   private final UserRepository userRepository;
   private final UserStyleRepository userStyleRepository;
+  private final CoupleMemberRepository coupleMemberRepository;
 
   public UserStyleServiceImpl(
       UserRepository userRepository,
-      UserStyleRepository userStyleRepository
+      UserStyleRepository userStyleRepository,
+      CoupleMemberRepository coupleMemberRepository
   ) {
     this.userRepository = userRepository;
     this.userStyleRepository = userStyleRepository;
+    this.coupleMemberRepository = coupleMemberRepository;
   }
 
   // USER_STYLES.USER_ID가 PK이므로 기존 행이 있으면 갱신하고, 없을 때만 한 번 생성한다.
@@ -66,6 +70,22 @@ public class UserStyleServiceImpl implements UserStyleService {
             UserStyle.round(style.getInitDepth())
         ))
         .orElse(null);
+  }
+
+  // 커플 화면 "성향 궁합"의 파트너 점수 - 여태껏 UserStyle API가 없어서 항상 중립값(50)으로만
+  // 표시되던 걸 실제 조회로 채운다(2026-09-01). 연결된 커플이 없거나 파트너가 온보딩을 저장한
+  // 적 없으면(온보딩 안 함) null - 화면에서 getMyStyle과 같은 방식으로 "아직 없음" 처리한다.
+  @Override
+  public SaveOnboardingStyleRequest getPartnerStyle(Long userId) {
+    Long partnerId = coupleMemberRepository.findByUser_IdAndLeftAtIsNull(userId)
+        .map(member -> member.getCouple().getId())
+        .flatMap(coupleId -> coupleMemberRepository.findByCoupleId(coupleId).stream()
+            .filter(member -> member.getLeftAt() == null && !member.getUser().getId().equals(userId))
+            .findFirst())
+        .map(member -> member.getUser().getId())
+        .orElse(null);
+
+    return partnerId == null ? null : getMyStyle(partnerId);
   }
 
   private void validate(SaveOnboardingStyleRequest request) {

@@ -11,4 +11,8 @@ public interface UserStyleService {
 
   // <<저장된 성향값 조회 - 아직 온보딩을 저장한 적 없으면 null>>
   SaveOnboardingStyleRequest getMyStyle(Long userId);
+
+  // 커플 화면 "성향 궁합"용(2026-09-01 추가) - 연결된 파트너가 없거나 파트너가 온보딩을 저장한
+  // 적 없으면 null.
+  SaveOnboardingStyleRequest getPartnerStyle(Long userId);
 }
