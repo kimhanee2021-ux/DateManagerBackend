@@ -39,7 +39,7 @@ import java.time.format.DateTimeFormatter;
 @Slf4j
 public class ExchangeRateSyncServiceImpl implements ExchangeRateSyncService {
 
-  private static final String URL = "https://www.koreaexim.go.kr/site/program/financial/exchangeJSON";
+  private static final String URL = "https://oapi.koreaexim.go.kr/site/program/financial/exchangeJSON";
   private static final String USER_AGENT =
       "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36";
   private static final DateTimeFormatter DATE_FMT = DateTimeFormatter.ofPattern("yyyyMMdd");
@@ -163,7 +163,7 @@ public class ExchangeRateSyncServiceImpl implements ExchangeRateSyncService {
     HttpHeaders headers = new HttpHeaders();
     headers.set(HttpHeaders.USER_AGENT, USER_AGENT);
     headers.set(HttpHeaders.ACCEPT, "application/json, text/plain, */*");
-    headers.set(HttpHeaders.REFERER, "https://www.koreaexim.go.kr/");
+    headers.set(HttpHeaders.REFERER, "https://oapi.koreaexim.go.kr/");
     try {
       return restTemplate.exchange(url, HttpMethod.GET, new HttpEntity<>(headers), JsonNode.class).getBody();
     } catch (Exception e) {
