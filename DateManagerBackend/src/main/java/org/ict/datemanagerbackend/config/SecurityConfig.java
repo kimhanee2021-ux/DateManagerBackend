@@ -2,6 +2,7 @@ package org.ict.datemanagerbackend.config;
 
 import org.ict.datemanagerbackend.auth.JwtAuthFilter;
 import org.ict.datemanagerbackend.auth.OAuth2LoginSuccessHandler;
+import org.ict.datemanagerbackend.auth.PlatformAwareAuthorizationRequestRepository;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -39,6 +40,7 @@ public class SecurityConfig {
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity http,
                                             OAuth2LoginSuccessHandler successHandler,
+                                            PlatformAwareAuthorizationRequestRepository authorizationRequestRepository,
                                             JwtAuthFilter jwtAuthFilter) throws Exception {
         http
                 // JWT는 쿠키가 아니라 헤더로 전달되므로 CSRF 공격 대상이 아님 -> 비활성화
@@ -57,7 +59,8 @@ public class SecurityConfig {
                         .anyRequest().permitAll())
                 // 구글/카카오 OAuth2 로그인 활성화. 로그인 성공 시 처리는 OAuth2LoginSuccessHandler에 위임
                 // (여기에 failureHandler가 없으면 인증 실패 시 스프링 기본 동작인 "/login?error"로 리다이렉트되니 주의)
-                .oauth2Login(oauth2 -> oauth2.successHandler(successHandler))
+                .oauth2Login(oauth2 -> oauth2.successHandler(successHandler)
+                        .authorizationEndpoint(endpoint -> endpoint.authorizationRequestRepository(authorizationRequestRepository)))
                 // 이메일 로그인용 필터보다 먼저 JWT 검사 필터를 태워서, 헤더에 유효한 토큰이 있으면
                 // 이 시점에 SecurityContext에 인증 정보를 채워둔다
                 .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class);

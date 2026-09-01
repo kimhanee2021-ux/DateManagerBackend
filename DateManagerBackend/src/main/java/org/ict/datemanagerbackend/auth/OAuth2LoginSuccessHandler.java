@@ -42,6 +42,21 @@ public class OAuth2LoginSuccessHandler implements AuthenticationSuccessHandler {
     @Value("${app.frontend-base-url}")
     private String frontendBaseUrl;
 
+    @Value("${app.mobile-redirect-base}")
+    private String mobileRedirectBase;
+
+    // 로그인 시작 시점에 PlatformAwareAuthorizationRequestRepository가 세션에 저장해둔 platform
+    // 값을 보고, 안드로이드 앱발 요청이면 웹 주소(frontendBaseUrl, 실기기에선 도달 불가능한
+    // localhost) 대신 앱이 AndroidManifest.xml에 등록해둔 커스텀 스킴 딥링크로 돌려보낸다.
+    private String resolveRedirectBase(HttpServletRequest request) {
+        Object platform = request.getSession(true)
+                .getAttribute(PlatformAwareAuthorizationRequestRepository.OAUTH_PLATFORM_SESSION_KEY);
+        if ("android".equals(platform)) {
+            return mobileRedirectBase + "/callback";
+        }
+        return frontendBaseUrl + "/oauth/callback";
+    }
+
     public OAuth2LoginSuccessHandler(UserRepository userRepository,
                                       SocialAccountRepository socialAccountRepository,
                                       OAuth2AuthorizedClientService authorizedClientService,
@@ -115,7 +130,7 @@ public class OAuth2LoginSuccessHandler implements AuthenticationSuccessHandler {
             user = userRepository.findById(existingLink.get().getUser().getId())
                     .orElseThrow(() -> new IllegalStateException("연동된 유저를 찾을 수 없습니다"));
             if (user.getWithdrawnAt() != null) {
-                String redirectUrl = frontendBaseUrl + "/oauth/callback?error="
+                String redirectUrl = resolveRedirectBase(request) + "?error="
                         + URLEncoder.encode("탈퇴 처리된 계정입니다", StandardCharsets.UTF_8);
                 response.sendRedirect(redirectUrl);
                 return;
@@ -124,7 +139,7 @@ public class OAuth2LoginSuccessHandler implements AuthenticationSuccessHandler {
             java.util.Optional<User> existingByEmail = userRepository.findByEmail(email);
             if (existingByEmail.isPresent() && existingByEmail.get().getPasswordHash() != null) {
                 // 이미 이메일/비밀번호로 가입된 계정 -> 무단 연동 방지, 소셜 로그인 차단
-                String redirectUrl = frontendBaseUrl + "/oauth/callback?error="
+                String redirectUrl = resolveRedirectBase(request) + "?error="
                         + URLEncoder.encode("이미 일반 회원가입으로 등록된 이메일입니다. 기존 계정으로 로그인해주세요", StandardCharsets.UTF_8);
                 response.sendRedirect(redirectUrl);
                 return;
@@ -155,7 +170,7 @@ public class OAuth2LoginSuccessHandler implements AuthenticationSuccessHandler {
         // (프론트는 이 token 쿼리파라미터를 읽어 localStorage에 저장 -> 이후 요청부터 Authorization 헤더로 사용)
         loginLogRepository.save(LoginLog.builder().user(user).loggedInAt(LocalDateTime.now()).build());
         String jwt = jwtService.generateToken(user.getId(), user.getEmail());
-        String redirectUrl = frontendBaseUrl + "/oauth/callback?token=" + URLEncoder.encode(jwt, StandardCharsets.UTF_8);
+        String redirectUrl = resolveRedirectBase(request) + "?token=" + URLEncoder.encode(jwt, StandardCharsets.UTF_8);
         response.sendRedirect(redirectUrl);
     }
 }
