@@ -79,10 +79,16 @@ public class CourseServiceImpl implements CourseService {
     // 내가 만든 코스뿐 아니라, 지금 연결된 커플이 있으면 파트너가 만든 코스도 같이 보여준다
     // (2026-08-25) - CourseGroup에 couple 필드가 있었는데도 조회는 user 기준으로만 돼있어서
     // 커플끼리 서로 만든 코스를 못 보던 문제.
+    // coupleId가 null일 때 findByUser_IdOrCouple_Id(userId, null)을 그대로 호출하면 스프링
+    // 데이터 JPA가 "couple.id = null" 조건을 "couple_id IS NULL"로 바꿔버려서, 커플 연결을
+    // 한 번도 안 한 다른 모든 유저의 코스까지 다 조회돼버리는 문제가 있었다(2026-09-01 발견,
+    // 실제 데이터 노출 버그) - 커플이 없으면 내 코스만 조회하는 쿼리로 분기해서 막는다.
     Long coupleId = coupleMemberRepository.findByUser_IdAndLeftAtIsNull(userId)
         .map(member -> member.getCouple().getId())
         .orElse(null);
-    List<CourseGroup> groups = courseGroupRepository.findByUser_IdOrCouple_Id(userId, coupleId);
+    List<CourseGroup> groups = coupleId != null
+        ? courseGroupRepository.findByUser_IdOrCouple_Id(userId, coupleId)
+        : courseGroupRepository.findByUser_IdOrderByCreatedAtDesc(userId);
 
     if (groups.isEmpty()) {
       return List.of();
