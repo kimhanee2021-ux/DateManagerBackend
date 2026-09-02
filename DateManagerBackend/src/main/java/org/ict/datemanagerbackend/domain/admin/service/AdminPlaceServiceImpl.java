@@ -32,10 +32,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.stream.Collectors;
+import lombok.extern.slf4j.Slf4j;
 
 // 장소 동기화는 원래 매일 새벽에 자동(@Scheduled)으로만 도는데, 개발 중 수동으로 바로 실행해서
 // 결과를 확인하고 싶을 때 쓰는 관리자 전용 트리거를 모아둔 서비스.
 @Service
+@Slf4j
 public class AdminPlaceServiceImpl implements AdminPlaceService {
 
   private final PlaceRepository placeRepository;
@@ -417,7 +419,13 @@ public class AdminPlaceServiceImpl implements AdminPlaceService {
   // 띄우고 바로 응답만 반환한다 - 진행 상황/완료 여부는 서버 로그로 확인.
   @Override
   public Map<String, String> syncTourApiDetails(int limit) {
-    Thread.ofVirtual().name("tourapi-detail-sync").start(() -> tourApiDetailSyncService.syncDetails(limit));
+    // 수동 트리거 경로엔 완료 로그가 없어서, 백그라운드 스레드가 끝났는지 서버 로그로 확인할
+    // 방법이 없었다(2026-09-02 발견) - scheduledSync()와 동일한 형식으로 완료 로그를 남긴다.
+    Thread.ofVirtual().name("tourapi-detail-sync").start(() -> {
+      var result = tourApiDetailSyncService.syncDetails(limit);
+      log.info("TourAPI 상세정보 수동 동기화 완료 - 시도 {}건, 채움 {}건, 정보없음 {}건, 실패 {}건",
+          result.attempted(), result.filled(), result.noData(), result.failed());
+    });
     return Map.of(
         "status", "started",
         "message", "백그라운드로 실행을 시작했습니다. 진행 상황과 완료 여부는 서버 로그에서 확인하세요."
