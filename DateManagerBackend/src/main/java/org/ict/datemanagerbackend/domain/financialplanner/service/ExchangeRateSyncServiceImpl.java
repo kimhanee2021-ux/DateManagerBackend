@@ -39,6 +39,11 @@ import java.time.format.DateTimeFormatter;
 @Slf4j
 public class ExchangeRateSyncServiceImpl implements ExchangeRateSyncService {
 
+  // 2026-04-30부로 www.koreaexim.go.kr 구 도메인의 Open API 병행 제공이 종료되고 oapi.koreaexim.go.kr로
+  // 완전히 이전됨(2026-09-01 확인 - 구 도메인은 이제 이 경로에서 Connection reset을 반환). 아래
+  // buildRestTemplate()의 커스텀 TrustManager/CookieManager 우회 로직은 구 도메인 전용 문제(중간
+  // 인증서 누락, 세션 쿠키 없으면 봇으로 간주해 리다이렉트 반복)를 대응한 것이라 신 도메인에선 불필요할
+  // 가능성이 높지만, 부팅을 막지 않는 안전한 폴백이라 그대로 둔다.
   private static final String URL = "https://oapi.koreaexim.go.kr/site/program/financial/exchangeJSON";
   private static final String USER_AGENT =
       "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36";
